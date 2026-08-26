@@ -115,6 +115,33 @@ export function setArticleSkeleton(
   }));
 }
 
+/** 写入骨架到指定文章（按 ID） */
+export function setArticleSkeletonForArticle(
+  state: ICreationState,
+  articleId: string,
+  skeleton: IStorySkeleton,
+  chapters?: IChapter[]
+): ICreationState {
+  return updateArticleById(state, articleId, (a) => ({
+    ...a,
+    storySkeleton: skeleton,
+    chapters: chapters ?? a.chapters,
+    currentChapterId: chapters && chapters.length > 0 ? chapters[0].id : a.currentChapterId,
+  }));
+}
+
+/** 按 ID 更新指定文章（不依赖 currentArticleId） */
+export function updateArticleById(
+  state: ICreationState,
+  articleId: string,
+  updater: (article: INovelArticle) => INovelArticle
+): ICreationState {
+  const updatedArticles = state.articles.map((a) =>
+    a.id === articleId ? { ...updater(a), updatedAt: Date.now() } : a
+  );
+  return { ...state, articles: updatedArticles };
+}
+
 /** 更新当前文章的章节列表 */
 export function setArticleChapters(state: ICreationState, chapters: IChapter[]): ICreationState {
   return updateCurrentArticle(state, (a) => ({ ...a, chapters }));

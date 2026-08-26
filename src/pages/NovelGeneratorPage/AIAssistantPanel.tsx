@@ -45,6 +45,7 @@ interface AIAssistantPanelProps {
   setIsGenerating: (v: boolean) => void;
   onGenerateNextChapter?: () => void;
   hasNextChapter: boolean;
+  articleId?: string;
 }
 
 type AIAction = 'continue' | 'polish' | 'expand' | null;
@@ -59,6 +60,7 @@ export default function AIAssistantPanel({
   setIsGenerating,
   onGenerateNextChapter,
   hasNextChapter,
+  articleId,
 }: AIAssistantPanelProps) {
   const [activeAction, setActiveAction] = useState<AIAction>(null);
   const [customPrompt, setCustomPrompt] = useState('');
@@ -177,6 +179,7 @@ export default function AIAssistantPanel({
       chapterId: currentChapter.id,
       pluginId: 'novel_content_generate_1',
       input,
+      articleId,
     });
     setCustomPrompt('');
   }, [currentChapter, skeleton, customPrompt, startChapterGeneration]);
@@ -208,12 +211,14 @@ export default function AIAssistantPanel({
   const handleGenerateBook = useCallback(() => {
     if (!currentChapter || !skeleton || bookGenerating) return;
     const state = loadCreationState();
-    const chapters = state.chapters || [];
+    const chapters = articleId
+      ? (state.articles.find((a) => a.id === articleId)?.chapters || [])
+      : state.chapters || [];
     setTotalChapters(chapters.length);
     const idx = chapters.findIndex((c) => c.id === currentChapter.id);
     setCurrentIndex(idx);
     setShowBookDialog(true);
-  }, [currentChapter, skeleton, bookGenerating]);
+  }, [currentChapter, skeleton, bookGenerating, articleId]);
 
   const startBookGenerationFrom = useCallback(
     async (mode: 'fromCurrent' | 'fromStart') => {
@@ -266,9 +271,10 @@ export default function AIAssistantPanel({
         startChapterId,
         pluginId: 'novel_content_generate_1',
         buildInput,
+        articleId,
       });
     },
-    [skeleton, currentChapter, customPrompt, startBookGeneration]
+    [skeleton, currentChapter, customPrompt, startBookGeneration, articleId]
   );
 
   const handlePause = useCallback(() => {
@@ -360,7 +366,7 @@ export default function AIAssistantPanel({
         }
       };
 
-      await startNovelGeneration(taskType, pluginId, input, currentChapter.id, applyResult);
+      await startNovelGeneration(taskType, pluginId, input, currentChapter.id, applyResult, articleId);
       setActiveAction(null);
       setCustomPrompt('');
     },
@@ -373,6 +379,7 @@ export default function AIAssistantPanel({
       onInsertText,
       onReplaceSelection,
       startNovelGeneration,
+      articleId,
     ]
   );
 

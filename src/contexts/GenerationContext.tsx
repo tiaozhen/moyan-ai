@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import { toast } from 'sonner';
-import { loadCreationState, saveCreationState, updateCurrentArticle, setArticleSkeleton, setArticleCurrentChapterId } from '@/lib/storage';
+import { loadCreationState, saveCreationState, updateCurrentArticle, setArticleSkeletonForArticle, updateArticleById } from '@/lib/storage';
 import type { ICategory, ICategoryResearchData, IOutlineCard, IStorySkeleton, IChapter, ICreationState, NovelLengthType } from '@/data/novel';
 import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
 
@@ -50,7 +50,8 @@ interface GenerationContextValue {
   startStorySkeleton: (
     outline: string,
     lengthType: NovelLengthType,
-    mapper: (raw: any) => IStorySkeleton
+    mapper: (raw: any) => IStorySkeleton,
+    articleId?: string
   ) => Promise<IStorySkeleton | null>;
   // 小说正文流式生成（续写/扩写/润色），返回流式文本的实时读取接口
   startNovelGeneration: (
@@ -58,7 +59,8 @@ interface GenerationContextValue {
     pluginId: string,
     input: any,
     chapterId: string,
-    applyResult: (text: string) => void
+    applyResult: (text: string) => void,
+    articleId?: string
   ) => Promise<string | null>;
   getNovelStreamingText: () => string;
   // 取消
@@ -68,6 +70,7 @@ interface GenerationContextValue {
     chapterId: string;
     pluginId: string;
     input: any;
+    articleId?: string;
   }) => Promise<string | null>;
   getChapterStreamingText: () => string;
   isChapterGenerating: (chapterId: string) => boolean;
@@ -83,6 +86,7 @@ interface GenerationContextValue {
     startChapterId: string;
     pluginId: string;
     buildInput: (chapterId: string) => any;
+    articleId?: string;
   }) => Promise<boolean>;
   getBookProgress: () => { currentIndex: number; total: number; currentChapterId: string | null; chapterTitle: string | null; paused: boolean; stopped: boolean; done: boolean } | null;
 }
@@ -317,7 +321,8 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
     async (
       outline: string,
       lengthType: NovelLengthType,
-      mapper: (raw: any) => IStorySkeleton
+      mapper: (raw: any) => IStorySkeleton,
+      articleId?: string
     ): Promise<IStorySkeleton | null> => {
       const type: GenerationTaskType = 'story_skeleton';
       const ok = startTask(type);
@@ -364,10 +369,11 @@ ${outline}
 
         const mapped = mapper(result);
         const state = loadCreationState();
-        // 同时写入全局兼容字段和当前文章
+        // 写入到指定文章（articleId 优先），无则 fallback 到全局 currentArticleId
+        const targetArticleId = articleId || state.currentArticleId;
         let newState: ICreationState = { ...state, storySkeleton: mapped };
-        if (newState.currentArticleId) {
-          newState = setArticleSkeleton(newState, mapped);
+        if (targetArticleId) {
+          newState = setArticleSkeletonForArticle(newState, targetArticleId, mapped);
         }
         saveCreationState(newState);
         markTaskDone(type);
@@ -390,7 +396,8 @@ ${outline}
       pluginId: string,
       input: any,
       chapterId: string,
-      applyResult: (text: string) => void
+      applyResult: (text: string) => void,
+      articleId?: string
     ): Promise<string | null> => {
       const ok = startTask(taskType);
       if (!ok) return null;
@@ -417,12 +424,13 @@ ${outline}
         }
 
         if (full) {
-          // 先更新当前文章的章节内容（即使页面已卸载，数据也不会丢）
           const state = loadCreationState();
-          // 优先写入文章内 chapters
+          const targetArticleId = articleId || state.currentArticleId;
+
+          // 1) 写入指定文章的章节内容
           let stateWithArticle = state;
-          if (state.currentArticleId) {
-            stateWithArticle = updateCurrentArticle(state, (a) => {
+          if (targetArticleId) {
+            stateWithArticle = updateArticleById(state, targetArticleId, (a) => {
               const updatedChapters = a.chapters.map((c) =>
                 c.id === chapterId
                   ? {
@@ -441,15 +449,17 @@ ${outline}
             saveCreationState(stateWithArticle);
           }
 
-          // 同步更新顶层 chapters（向后兼容）
-          const updatedChapters: IChapter[] = stateWithArticle.chapters.map((c) =>
+          // 同步顶层 chapters（向后兼容）
+          const topChapters = stateWithArticle.chapters.length > 0 ? stateWithArticle.chapters : state.chapters;
+          const updatedTopChapters: IChapter[] = topChapters.map((c) =>
             c.id === chapterId
               ? { ...c, status: (c.status === 'unwritten' ? 'generated' : 'edited') as IChapter['status'], lastModified: Date.now() }
               : c
           );
-          // 注意：content 由 applyResult 写入 editor 后 autoSave 会同步；
-          // 这里确保至少 status 被更新。applyResult 内部会触发 autoSave 写 storage。
-          // 如果页面已卸载（applyResult 不生效），我们在这里也把完整内容存好。
+          stateWithArticle = { ...stateWithArticle, chapters: updatedTopChapters };
+          saveCreationState(stateWithArticle);
+
+          // 2) 调用 applyResult（页面存活时更新编辑器）
           let applied = false;
           try {
             applyResult(full);
@@ -458,11 +468,11 @@ ${outline}
             applied = false;
           }
           if (!applied) {
-            // 兜底：直接在 storage 里追加 content（简单拼接，后续用户打开页面时看到）
+            // 兜底：页面已卸载，直接在 storage 里追加 content
             const state2 = loadCreationState();
-            // 写入文章内
-            if (state2.currentArticleId) {
-              const state2WithArticle = updateCurrentArticle(state2, (a) => {
+            const targetId = articleId || state2.currentArticleId;
+            if (targetId) {
+              const state2WithArticle = updateArticleById(state2, targetId, (a) => {
                 const chaptersWithContent = a.chapters.map((c) => {
                   if (c.id !== chapterId) return c;
                   const newContent = (c.content || '') + full.split('\n').filter((p) => p.trim()).map((p) => `<p>${p}</p>`).join('');
@@ -482,7 +492,6 @@ ${outline}
               });
               saveCreationState(state2WithArticle);
             } else {
-              // 没有 currentArticleId 的极端情况，写顶层兼容
               const chaptersWithContent: IChapter[] = state2.chapters.map((c) => {
                 if (c.id !== chapterId) return c;
                 const newContent = (c.content || '') + full.split('\n').filter((p) => p.trim()).map((p) => `<p>${p}</p>`).join('');
@@ -528,8 +537,9 @@ ${outline}
       chapterId: string;
       pluginId: string;
       input: any;
+      articleId?: string;
     }): Promise<string | null> => {
-      const { chapterId, pluginId, input } = params;
+      const { chapterId, pluginId, input, articleId } = params;
       const type: GenerationTaskType = 'novel_chapter_generate';
       const ok = startTask(type);
       if (!ok) return null;
@@ -551,12 +561,14 @@ ${outline}
             full += piece;
             chapterStreamingRef.current = full;
             setTaskProgress(type, `已生成约 ${full.length} 字...`);
-            // 每 chunk 都实时写入 storage（优先当前文章），保证切页不丢进度
+            // 每 chunk 实时写入 storage，按 articleId 精确写入目标文章
             const state = loadCreationState();
-            const articleChapters = state.currentArticleId
-              ? state.articles.find((a) => a.id === state.currentArticleId)?.chapters
-              : null;
-            const baseChapters = articleChapters || state.chapters;
+            const targetArticleId = articleId || state.currentArticleId;
+            let baseChapters: IChapter[] = state.chapters;
+            if (targetArticleId) {
+              const art = state.articles.find((a) => a.id === targetArticleId);
+              if (art) baseChapters = art.chapters;
+            }
             const updatedChapters: IChapter[] = baseChapters.map((c) => {
               if (c.id !== chapterId) return c;
               const htmlContent = full
@@ -572,9 +584,9 @@ ${outline}
               };
             });
             let newState: ICreationState = { ...state, chapters: updatedChapters };
-            // 同步写入当前文章
-            if (state.currentArticleId) {
-              newState = updateCurrentArticle(newState, (a) => ({
+            // 写入目标文章
+            if (targetArticleId) {
+              newState = updateArticleById(newState, targetArticleId, (a) => ({
                 ...a,
                 chapters: updatedChapters,
                 currentChapterId: a.currentChapterId || chapterId,
@@ -717,8 +729,9 @@ ${outline}
       startChapterId: string;
       pluginId: string;
       buildInput: (chapterId: string) => any;
+      articleId?: string;
     }): Promise<boolean> => {
-      const { startChapterId, pluginId, buildInput } = params;
+      const { startChapterId, pluginId, buildInput, articleId } = params;
       const type: GenerationTaskType = 'novel_book_generate';
       const ok = startTask(type);
       if (!ok) return false;
@@ -730,11 +743,11 @@ ${outline}
 
       try {
         const state = loadCreationState();
-        // 优先从当前文章读取章节（确保不串数据）
-        const currentArticle = state.currentArticleId
-          ? state.articles.find((a) => a.id === state.currentArticleId) || null
+        const targetArticleId = articleId || state.currentArticleId;
+        const targetArticle = targetArticleId
+          ? state.articles.find((a) => a.id === targetArticleId) || null
           : null;
-        const chapters = currentArticle?.chapters || state.chapters || [];
+        const chapters = targetArticle?.chapters || state.chapters || [];
         const startIndex = chapters.findIndex((c) => c.id === startChapterId);
         if (startIndex === -1) {
           markTaskDone(type, '起始章节不存在');
@@ -793,37 +806,36 @@ ${outline}
                 full += piece;
                 chapterStreamingRef.current = full;
                 setTaskProgress(type, `第 ${i - startIndex + 1}/${total} 章生成中：${chapter.chapterTitle}`);
-                // 每 chunk 实时写入 storage（只写当前文章）
-                const st = loadCreationState();
-                const updatedChapters: IChapter[] = (st.currentArticleId
-                  ? st.articles.find((a) => a.id === st.currentArticleId)?.chapters
-                  : st.chapters) || [];
-                const withContent = updatedChapters.map((c) => {
-                  if (c.id !== chapter.id) return c;
-                  const htmlContent = full
-                    .split('\n')
-                    .filter((p) => p.trim())
-                    .map((p) => `<p>${p}</p>`)
-                    .join('');
-                  return {
-                    ...c,
-                    content: htmlContent,
-                    status: 'generated' as const,
-                    lastModified: Date.now(),
-                  };
-                });
-                let newState: ICreationState = { ...st };
-                if (st.currentArticleId) {
-                  newState = updateCurrentArticle(newState, (a) => ({
-                    ...a,
-                    chapters: withContent,
-                  }));
-                  // 同步顶层 chapters（向后兼容）
-                  newState.chapters = withContent;
-                } else {
-                  newState.chapters = withContent;
-                }
-                saveCreationState(newState);
+                // 每 chunk 实时写入目标文章
+                 const st = loadCreationState();
+                 const tgtId = articleId || st.currentArticleId;
+                 let articleChapters: IChapter[] = st.chapters;
+                 if (tgtId) {
+                   const art = st.articles.find((a) => a.id === tgtId);
+                   if (art) articleChapters = art.chapters;
+                 }
+                 const withContent = articleChapters.map((c) => {
+                   if (c.id !== chapter.id) return c;
+                   const htmlContent = full
+                     .split('\n')
+                     .filter((p) => p.trim())
+                     .map((p) => `<p>${p}</p>`)
+                     .join('');
+                   return {
+                     ...c,
+                     content: htmlContent,
+                     status: 'generated' as const,
+                     lastModified: Date.now(),
+                   };
+                 });
+                 let newState: ICreationState = { ...st, chapters: withContent };
+                 if (tgtId) {
+                   newState = updateArticleById(newState, tgtId, (a) => ({
+                     ...a,
+                     chapters: withContent,
+                   }));
+                 }
+                 saveCreationState(newState);
               }
 
               // 每 chunk 后检查暂停

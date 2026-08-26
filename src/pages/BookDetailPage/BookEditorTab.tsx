@@ -9,7 +9,7 @@ import type { IChapter, IStorySkeleton, INovelArticle } from '@/data/novel';
 import {
   loadCreationState,
   saveCreationState,
-  updateCurrentArticle,
+  updateArticleById,
   setArticleChapterId,
 } from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
@@ -72,7 +72,7 @@ export default function BookEditorTab() {
         status: 'unwritten' as const,
         lastModified: Date.now(),
       }));
-      const newState = updateCurrentArticle(state, (a) => ({
+      const newState = updateArticleById(state, bookId, (a) => ({
         ...a,
         chapters: initChapters,
         currentChapterId: initChapters[0]?.id || null,
@@ -114,7 +114,7 @@ export default function BookEditorTab() {
     if (!bookId || !currentChapterId || !editorRef.current) return;
     const content = editorRef.current.innerHTML;
     const state = loadCreationState();
-    const next = updateCurrentArticle(state, (a) => {
+    const next = updateArticleById(state, bookId, (a) => {
       const updatedChapters = a.chapters.map((c) =>
         c.id === currentChapterId
           ? {
@@ -282,6 +282,7 @@ export default function BookEditorTab() {
         chapterId,
         pluginId: 'novel_content_generate_1',
         input,
+        articleId: bookId,
       });
     },
     [bookId, chapters, currentChapterId, skeleton, handleSelectChapter, startChapterGeneration]
@@ -453,6 +454,7 @@ export default function BookEditorTab() {
         hasNextChapter={hasNextChapter}
         isGenerating={isGenerating}
         setIsGenerating={setIsAnyGeneratingState}
+        articleId={bookId}
       />
     </div>
   );

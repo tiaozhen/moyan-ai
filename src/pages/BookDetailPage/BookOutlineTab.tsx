@@ -28,8 +28,8 @@ import {
   loadCreationState,
   saveCreationState,
   getCurrentArticle,
-  updateCurrentArticle,
-  setArticleSkeleton,
+  updateArticleById,
+  setArticleSkeletonForArticle,
 } from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
 
@@ -81,7 +81,7 @@ export default function BookOutlineTab() {
       return;
     }
 
-    const result = await startStorySkeleton(article.outline.concept, article.lengthType, mapApiToSkeleton);
+    const result = await startStorySkeleton(article.outline.concept, article.lengthType, mapApiToSkeleton, bookId);
     if (result) {
       const state = loadCreationState();
       const chapters: IChapter[] = result.chapterPlan.map((meta) => ({
@@ -91,7 +91,7 @@ export default function BookOutlineTab() {
         status: 'unwritten' as const,
         lastModified: Date.now(),
       }));
-      const newState = setArticleSkeleton(state, result, chapters);
+      const newState = setArticleSkeletonForArticle(state, bookId, result, chapters);
       saveCreationState(newState);
       setSkeleton(result);
       const updated = newState.articles.find((a) => a.id === bookId) || null;
@@ -102,10 +102,10 @@ export default function BookOutlineTab() {
   const updateSkeleton = useCallback(
     (updater: (prev: IStorySkeleton) => IStorySkeleton) => {
       setSkeleton((prev) => {
-        if (!prev) return prev;
+        if (!prev || !bookId) return prev;
         const next = updater(prev);
         const state = loadCreationState();
-        const newState = updateCurrentArticle(state, (a) => ({
+        const newState = updateArticleById(state, bookId, (a) => ({
           ...a,
           storySkeleton: next,
         }));
@@ -136,7 +136,7 @@ export default function BookOutlineTab() {
           lastModified: Date.now(),
         }));
       }
-      const newState = setArticleSkeleton(state, skeleton, chapters);
+      const newState = setArticleSkeletonForArticle(state, bookId, skeleton, chapters);
       saveCreationState(newState);
     }
     navigate(`/books/${bookId}/editor`);
