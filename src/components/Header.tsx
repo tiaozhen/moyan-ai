@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { BarChart3, Lightbulb, GitBranch, BookOpen, Sun, Moon, PenTool, Loader2 } from 'lucide-react';
+import { BarChart3, Lightbulb, GitBranch, BookOpen, Sun, Moon, PenTool, Loader2, Pause } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from 'next-themes';
 import { useState, useEffect, useMemo } from 'react';
@@ -28,6 +28,8 @@ export default function Header() {
   const runningTasks = useMemo(() => tasks.filter((t) => t.status === 'running'), [tasks]);
   const hasRunning = runningTasks.length > 0;
   const primaryTask = runningTasks[0];
+  const isPaused = primaryTask?.pauseStatus === 'paused';
+  const isStopped = primaryTask?.pauseStatus === 'stopped';
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-md">
@@ -67,8 +69,20 @@ export default function Header() {
         <div className="flex items-center gap-2">
           {hasRunning && primaryTask && (
             <div className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-sm md:flex">
-              <Loader2 className="size-3.5 animate-spin text-primary" />
-              <span className="font-medium text-foreground">正在生成{primaryTask.label}</span>
+              {isPaused ? (
+                <Pause className="size-3.5 text-warning" />
+              ) : isStopped ? (
+                <Loader2 className="size-3.5 text-destructive" />
+              ) : (
+                <Loader2 className="size-3.5 animate-spin text-primary" />
+              )}
+              <span className="font-medium text-foreground">
+                {isPaused
+                  ? `${primaryTask.label}（已暂停）`
+                  : isStopped
+                  ? `${primaryTask.label}（已停止）`
+                  : `正在生成${primaryTask.label}`}
+              </span>
               {primaryTask.progressText && (
                 <span className="max-w-[180px] truncate">{primaryTask.progressText}</span>
               )}

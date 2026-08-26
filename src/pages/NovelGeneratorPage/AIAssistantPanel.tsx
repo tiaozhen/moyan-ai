@@ -8,6 +8,10 @@ import {
   FileText,
   ChevronRight,
   AlertCircle,
+  Pause,
+  Play,
+  Square,
+  BookOpen,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -60,6 +64,9 @@ export default function AIAssistantPanel({
   const [customPrompt, setCustomPrompt] = useState('');
   const [streamingText, setStreamingText] = useState('');
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const [showBookDialog, setShowBookDialog] = useState(false);
+  const [totalChapters, setTotalChapters] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const {
     startNovelGeneration,
     getNovelStreamingText,
@@ -68,6 +75,12 @@ export default function AIAssistantPanel({
     getChapterStreamingText,
     isChapterGenerating,
     getGeneratingChapterId,
+    startBookGeneration,
+    getBookProgress,
+    pauseTask,
+    resumeTask,
+    stopTask,
+    getTaskPauseStatus,
   } = useGeneration();
   const pollRef = useRef<number | null>(null);
 
@@ -76,13 +89,19 @@ export default function AIAssistantPanel({
     currentChapter &&
     isChapterGenerating(currentChapter.id);
 
+  const bookGenerating = isTaskRunning('novel_book_generate');
+  const bookPauseStatus = getTaskPauseStatus('novel_book_generate');
+  const bookProgress = getBookProgress();
+  const isBookPaused = bookPauseStatus === 'paused';
+
   const anyNovelTaskRunning =
     isTaskRunning('novel_continue') ||
     isTaskRunning('novel_polish') ||
     isTaskRunning('novel_expand');
 
-  // 整体生成中状态（包括整章生成）
-  const overallGenerating = isGenerating || isTaskRunning('novel_chapter_generate');
+  // 整体生成中状态（包括整章生成、整本书生成）
+  const overallGenerating =
+    isGenerating || isTaskRunning('novel_chapter_generate') || bookGenerating;
 
   // 轮询同步流式文本（后台生成时也能看到）
   useEffect(() => {
@@ -184,7 +203,101 @@ export default function AIAssistantPanel({
       `章节概要：${ch?.chapterSummary || ''}`,
       ...chapterDetailParts,
     ].filter(Boolean).join('\n');
-  }, [skeleton, currentChapter]);
+   }, [skeleton, currentChapter]);
+
+  // ========== 整本书生成 ==========
+  const handleGenerateBook = useCallback(() => {
+    if (!currentChapter || !skeleton || bookGenerating) return;
+    const state = loadCreationState();
+    const chapters = state.chapters || [];
+    setTotalChapters(chapters.length);
+    const idx = chapters.findIndex((c) => c.id === currentChapter.id);
+    setCurrentIndex(idx);
+    setShowBookDialog(true);
+  }, [currentChapter, skeleton, bookGenerating]);
+
+  const startBookGenerationFrom = useCallback(
+    async (mode: 'fromCurrent' | 'fromStart') => {
+      if (!skeleton) return;
+      setShowBookDialog(false);
+      const state = loadCreationState();
+      const chapters = state.chapters || [];
+      let startChapterId: string;
+      if (mode === 'fromStart') {
+        startChapterId = chapters[0]?.id || currentChapter?.id || '';
+      } else {
+        startChapterId = currentChapter?.id || chapters[0]?.id || '';
+      }
+      if (!startChapterId) return;
+
+      const buildInput = (chapterId: string) => {
+        const ch = chapters.find((c) => c.id === chapterId);
+        if (!ch) return {};
+        const mainChars = skeleton.characterSettings
+          .slice(0, 3)
+          .map((c) => `${c.name}（${c.identity}）`)
+          .join('、');
+        const chapterDetailParts: string[] = [];
+        const cc = ch as any;
+        if (cc?.coreEvent) chapterDetailParts.push(`核心事件：${cc.coreEvent}`);
+        if (cc?.characters) chapterDetailParts.push(`出场人物：${cc.characters}`);
+        if (cc?.sceneLocation) chapterDetailParts.push(`场景地点：${cc.sceneLocation}`);
+        if (cc?.moodTone) chapterDetailParts.push(`情绪基调：${cc.moodTone}`);
+        if (cc?.chapterEnd) chapterDetailParts.push(`本章应写到：${cc.chapterEnd}`);
+        if (cc?.foreshadowing) chapterDetailParts.push(`伏笔处理：${cc.foreshadowing}`);
+        const outlineContext = [
+          `故事背景：${skeleton.worldView.background}`,
+          `主要人物：${mainChars}`,
+          `当前章节：第${cc?.chapterNumber || ''}章 ${cc?.chapterTitle || ''}`,
+          `章节概要：${cc?.chapterSummary || ''}`,
+          ...chapterDetailParts,
+        ].filter(Boolean).join('\n');
+        let req = '根据故事骨架和章节规划，生成完整一章正文，约1500-2000字，情节完整有张力';
+        if (customPrompt.trim()) {
+          req += `。${customPrompt.trim()}`;
+        }
+        return {
+          novel_outline: outlineContext,
+          current_context: '',
+          generation_requirement: req,
+        };
+      };
+
+      await startBookGeneration({
+        startChapterId,
+        pluginId: 'novel_content_generate_1',
+        buildInput,
+      });
+    },
+    [skeleton, currentChapter, customPrompt, startBookGeneration]
+  );
+
+  const handlePause = useCallback(() => {
+    if (bookGenerating) {
+      pauseTask('novel_book_generate');
+    } else if (isTaskRunning('novel_chapter_generate')) {
+      pauseTask('novel_chapter_generate');
+    }
+  }, [bookGenerating, isTaskRunning, pauseTask]);
+
+  const handleResume = useCallback(() => {
+    if (bookPauseStatus === 'paused') {
+      resumeTask('novel_book_generate');
+    } else if (getTaskPauseStatus('novel_chapter_generate') === 'paused') {
+      resumeTask('novel_chapter_generate');
+    }
+  }, [bookPauseStatus, getTaskPauseStatus, resumeTask]);
+
+  const handleStop = useCallback(() => {
+    if (bookGenerating || bookPauseStatus === 'paused') {
+      stopTask('novel_book_generate');
+    } else if (isTaskRunning('novel_chapter_generate') || getTaskPauseStatus('novel_chapter_generate') === 'paused') {
+      stopTask('novel_chapter_generate');
+    }
+  }, [bookGenerating, bookPauseStatus, isTaskRunning, getTaskPauseStatus, stopTask]);
+
+  const isSingleChapterPaused = getTaskPauseStatus('novel_chapter_generate') === 'paused';
+  const singleChapterStopped = getTaskPauseStatus('novel_chapter_generate') === 'stopped';
 
   const handleAction = useCallback(
     async (action: AIAction) => {
@@ -280,29 +393,101 @@ export default function AIAssistantPanel({
         {/* 一键生成本章 */}
         <div className="space-y-2">
           <div className="text-xs font-medium text-muted-foreground">一键生成</div>
-          <Button
-            variant="default"
-            size="sm"
-            className="w-full gap-2"
-            onClick={handleGenerateChapter}
-            disabled={!currentChapter || overallGenerating || !skeleton}
-          >
-            {isCurrentGenerating ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                正在生成本章...
-              </>
-            ) : (
-              <>
+
+          {/* 生成控制区（生成中/暂停中显示） */}
+          {(chapterGenerating || isSingleChapterPaused || bookGenerating) && (
+            <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+              <div className="flex items-center gap-2 text-xs">
+                {isBookPaused || isSingleChapterPaused ? (
+                  <>
+                    <Pause className="size-3.5 text-warning" />
+                    <span className="font-medium text-warning">已暂停</span>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 className="size-3.5 animate-spin text-primary" />
+                    <span className="font-medium text-foreground">
+                      {bookGenerating
+                        ? `${bookProgress ? `第 ${bookProgress.currentIndex + 1}/${bookProgress.total} 章` : '整本书生成中...'}`
+                        : '整章生成中...'}
+                    </span>
+                  </>
+                )}
+              </div>
+              {bookGenerating && bookProgress && (
+                <div className="space-y-1">
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {bookProgress.chapterTitle}
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+                    <div
+                      className="h-full bg-primary transition-all duration-300"
+                      style={{ width: `${bookProgress.total > 0 ? ((bookProgress.currentIndex + 1) / bookProgress.total) * 100 : 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="flex-1 gap-1"
+                  onClick={isBookPaused || isSingleChapterPaused ? handleResume : handlePause}
+                >
+                  {isBookPaused || isSingleChapterPaused ? (
+                    <>
+                      <Play className="size-3.5" />
+                      继续
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="size-3.5" />
+                      暂停
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 gap-1 text-destructive hover:text-destructive"
+                  onClick={handleStop}
+                >
+                  <Square className="size-3.5 fill-current" />
+                  停止
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* 生成本章按钮 */}
+          {!chapterGenerating && !isSingleChapterPaused && !bookGenerating && (
+            <>
+              <Button
+                variant="default"
+                size="sm"
+                className="w-full gap-2"
+                onClick={handleGenerateChapter}
+                disabled={!currentChapter || overallGenerating || !skeleton}
+              >
                 <Sparkles className="size-4" />
                 {currentChapter?.content && currentChapter.content.trim().length > 0
                   ? '重新生成本章'
                   : 'AI 生成本章'}
-              </>
-            )}
-          </Button>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full gap-2"
+                onClick={handleGenerateBook}
+                disabled={!currentChapter || overallGenerating || !skeleton}
+              >
+                <BookOpen className="size-4" />
+                AI 生成整本书
+              </Button>
+            </>
+          )}
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            基于故事骨架、前文内容和章节规划，自动生成完整一章正文
+            基于故事骨架、前文内容和章节规划，自动生成章节正文
           </p>
         </div>
 
@@ -487,6 +672,55 @@ export default function AIAssistantPanel({
             >
               确定重新生成
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {/* 整本书生成确认对话框 */}
+      <AlertDialog open={showBookDialog} onOpenChange={setShowBookDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <BookOpen className="size-5 text-primary" />
+              生成整本书
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              检测到当前不是第一章，请选择生成范围：
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-3 h-auto py-3"
+              onClick={() => startBookGenerationFrom('fromCurrent')}
+            >
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <Play className="size-4" />
+              </div>
+              <div className="text-left">
+                <div className="text-sm font-medium">从本章生成到结尾</div>
+                <div className="text-xs text-muted-foreground">
+                  从第 {currentIndex + 1} 章开始，共 {totalChapters - currentIndex} 章
+                </div>
+              </div>
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-3 h-auto py-3"
+              onClick={() => startBookGenerationFrom('fromStart')}
+            >
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary">
+                <BookOpen className="size-4" />
+              </div>
+              <div className="text-left">
+                <div className="text-sm font-medium">从第一章重新生成全书</div>
+                <div className="text-xs text-muted-foreground">
+                  从第 1 章开始，共 {totalChapters} 章（已有内容的章节会跳过）
+                </div>
+              </div>
+            </Button>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

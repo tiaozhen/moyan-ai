@@ -35,12 +35,14 @@ export default function NovelGeneratorPage() {
   const [toolbarPos, setToolbarPos] = useState<{ top: number; left: number } | undefined>();
   const [saving, setSaving] = useState(false);
   const [ghostText, setGhostText] = useState('');
-  const { isTaskRunning, startChapterGeneration, getGeneratingChapterId, getChapterStreamingText } = useGeneration();
+  const { isTaskRunning, startChapterGeneration, getGeneratingChapterId, getChapterStreamingText, getBookProgress } = useGeneration();
   const isGenerating =
     isTaskRunning('novel_continue') ||
     isTaskRunning('novel_polish') ||
     isTaskRunning('novel_expand');
   const isChapterGenerating = isTaskRunning('novel_chapter_generate');
+  const isBookGenerating = isTaskRunning('novel_book_generate');
+  const isAnyGenerating = isChapterGenerating || isBookGenerating;
 
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -99,9 +101,9 @@ export default function NovelGeneratorPage() {
     []
   );
 
-  // 整章生成过程中，轮询 storage 同步最新内容到编辑器（后台生成也能看到进度）
+  // 整章生成 / 整本书生成过程中，轮询 storage 同步最新内容到编辑器
   useEffect(() => {
-    if (!isChapterGenerating) return;
+    if (!isAnyGenerating) return;
     const timer = window.setInterval(() => {
       const state = loadCreationState();
       const article = getCurrentArticle(state);
@@ -112,6 +114,15 @@ export default function NovelGeneratorPage() {
           setChapters((prev) =>
             prev.map((c) => (c.id === genId ? { ...genChapter } : c))
           );
+          // 整本书模式下，自动切换到当前生成中的章节
+          if (isBookGenerating && genId !== currentChapterId) {
+            setCurrentChapterId(genId);
+            if (editorRef.current) {
+              editorRef.current.innerHTML = genChapter.content || '';
+              editorRef.current.scrollTop = editorRef.current.scrollHeight;
+            }
+            return;
+          }
           if (genId === currentChapterId && editorRef.current) {
             if (editorRef.current.innerHTML !== genChapter.content) {
               editorRef.current.innerHTML = genChapter.content || '';
@@ -122,11 +133,11 @@ export default function NovelGeneratorPage() {
       }
     }, 300);
     return () => window.clearInterval(timer);
-  }, [isChapterGenerating, getGeneratingChapterId, currentChapterId]);
+  }, [isAnyGenerating, getGeneratingChapterId, currentChapterId, isBookGenerating]);
 
-  // 整章生成完成后，重新读一次最新数据
+  // 生成完成后，重新读一次最新数据
   useEffect(() => {
-    if (isChapterGenerating) return;
+    if (isAnyGenerating) return;
     const state = loadCreationState();
     const article = getCurrentArticle(state);
     if (article && article.chapters.length > 0) {
@@ -138,7 +149,7 @@ export default function NovelGeneratorPage() {
         }
       }
     }
-  }, [isChapterGenerating, currentChapterId]);
+  }, [isAnyGenerating, currentChapterId]);
 
   const currentChapter = chapters.find((c) => c.id === currentChapterId) || null;
 
@@ -619,7 +630,7 @@ export default function NovelGeneratorPage() {
 
       {/* 悬浮工具栏 */}
       <EditorToolbar
-        visible={toolbarVisible && !isGenerating && !isChapterGenerating}
+        visible={toolbarVisible && !isGenerating && !isAnyGenerating}
         position={toolbarPos}
         onCommand={handleCommand}
       />

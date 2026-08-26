@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import { toast } from 'sonner';
-import { loadCreationState, saveCreationState, updateCurrentArticle, setArticleSkeleton } from '@/lib/storage';
+import { loadCreationState, saveCreationState, updateCurrentArticle, setArticleSkeleton, setArticleCurrentChapterId } from '@/lib/storage';
 import type { ICategory, ICategoryResearchData, IOutlineCard, IStorySkeleton, IChapter, ICreationState, NovelLengthType } from '@/data/novel';
 import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
 
@@ -22,7 +22,10 @@ export type GenerationTaskType =
   | 'novel_continue'
   | 'novel_polish'
   | 'novel_expand'
-  | 'novel_chapter_generate';
+  | 'novel_chapter_generate'
+  | 'novel_book_generate';
+
+export type GenerationPauseStatus = 'idle' | 'paused' | 'stopped';
 
 export interface IGenerationTask {
   id: string;
@@ -30,6 +33,7 @@ export interface IGenerationTask {
   label: string;
   status: 'running' | 'done' | 'error';
   progressText?: string;
+  pauseStatus?: GenerationPauseStatus;
   error?: string;
 }
 
@@ -68,6 +72,19 @@ interface GenerationContextValue {
   getChapterStreamingText: () => string;
   isChapterGenerating: (chapterId: string) => boolean;
   getGeneratingChapterId: () => string | null;
+  // 暂停 / 继续 / 停止
+  pauseTask: (type: GenerationTaskType) => void;
+  resumeTask: (type: GenerationTaskType) => void;
+  stopTask: (type: GenerationTaskType) => void;
+  getTaskPauseStatus: (type: GenerationTaskType) => GenerationPauseStatus;
+  isTaskStopped: (type: GenerationTaskType) => boolean;
+  // 整本书生成
+  startBookGeneration: (params: {
+    startChapterId: string;
+    pluginId: string;
+    buildInput: (chapterId: string) => any;
+  }) => Promise<boolean>;
+  getBookProgress: () => { currentIndex: number; total: number; currentChapterId: string | null; chapterTitle: string | null; paused: boolean; stopped: boolean; done: boolean } | null;
 }
 
 const GenerationContext = createContext<GenerationContextValue | null>(null);
@@ -80,6 +97,7 @@ const TASK_LABELS: Record<GenerationTaskType, string> = {
   novel_polish: '小说润色',
   novel_expand: '小说扩写',
   novel_chapter_generate: '整章生成',
+  novel_book_generate: '整本书生成',
 };
 
 export function GenerationProvider({ children }: { children: ReactNode }) {
@@ -92,6 +110,21 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
   // 运行中任务类型集合（用 ref 跟踪，避免闭包旧值问题）
   const runningTypesRef = useRef<Set<GenerationTaskType>>(new Set());
   const cancelledTypesRef = useRef<Set<GenerationTaskType>>(new Set());
+  // 暂停 / 停止状态
+  const pausedTypesRef = useRef<Set<GenerationTaskType>>(new Set());
+  const stoppedTypesRef = useRef<Set<GenerationTaskType>>(new Set());
+  // 暂停时阻塞的 Promise resolve 函数（用于 continue 时恢复）
+  const pauseResolversRef = useRef<Map<GenerationTaskType, () => void>>(new Map());
+  // 整本书生成进度
+  const bookProgressRef = useRef<{
+    currentIndex: number;
+    total: number;
+    currentChapterId: string | null;
+    chapterTitle: string | null;
+    paused: boolean;
+    stopped: boolean;
+    done: boolean;
+  } | null>(null);
 
   const setTaskProgress = useCallback((type: GenerationTaskType, progressText: string) => {
     setTasks((prev) =>
@@ -464,7 +497,7 @@ ${outline}
         let full = '';
 
         for await (const chunk of stream as any) {
-          if (cancelledTypesRef.current.has(type)) {
+          if (cancelledTypesRef.current.has(type) || stoppedTypesRef.current.has(type)) {
             return null;
           }
           const piece = chunk.content ?? chunk.response ?? '';
@@ -502,6 +535,18 @@ ${outline}
               }));
             }
             saveCreationState(newState);
+          }
+
+          // 暂停检查
+          if (pausedTypesRef.current.has(type)) {
+            setTaskProgress(type, '已暂停');
+            await new Promise<void>((resolve) => {
+              pauseResolversRef.current.set(type, resolve);
+            });
+            if (stoppedTypesRef.current.has(type)) {
+              return null;
+            }
+            setTaskProgress(type, `已生成约 ${full.length} 字...`);
           }
         }
 
@@ -541,6 +586,246 @@ ${outline}
   );
 
   const getGeneratingChapterId = useCallback(() => generatingChapterIdRef.current, []);
+
+  // ========== 暂停 / 继续 / 停止 ==========
+
+  const setTaskPauseStatus = useCallback((type: GenerationTaskType, pauseStatus: GenerationPauseStatus) => {
+    setTasks((prev) =>
+      prev.map((t) => (t.type === type && t.status === 'running' ? { ...t, pauseStatus } : t))
+    );
+  }, []);
+
+  const pauseTask = useCallback(
+    (type: GenerationTaskType) => {
+      if (!runningTypesRef.current.has(type)) return;
+      pausedTypesRef.current.add(type);
+      setTaskPauseStatus(type, 'paused');
+    },
+    [setTaskPauseStatus]
+  );
+
+  const resumeTask = useCallback(
+    (type: GenerationTaskType) => {
+      if (!pausedTypesRef.current.has(type)) return;
+      pausedTypesRef.current.delete(type);
+      setTaskPauseStatus(type, 'idle');
+      // 触发暂停 resolve 让循环继续
+      const resolver = pauseResolversRef.current.get(type);
+      if (resolver) {
+        pauseResolversRef.current.delete(type);
+        resolver();
+      }
+    },
+    [setTaskPauseStatus]
+  );
+
+  const stopTask = useCallback(
+    (type: GenerationTaskType) => {
+      stoppedTypesRef.current.add(type);
+      // 同时解除暂停
+      pausedTypesRef.current.delete(type);
+      const resolver = pauseResolversRef.current.get(type);
+      if (resolver) {
+        pauseResolversRef.current.delete(type);
+        resolver();
+      }
+      setTaskPauseStatus(type, 'stopped');
+    },
+    [setTaskPauseStatus]
+  );
+
+  const getTaskPauseStatus = useCallback(
+    (type: GenerationTaskType): GenerationPauseStatus => {
+      if (stoppedTypesRef.current.has(type)) return 'stopped';
+      if (pausedTypesRef.current.has(type)) return 'paused';
+      return 'idle';
+    },
+    []
+  );
+
+  const isTaskStopped = useCallback(
+    (type: GenerationTaskType) => stoppedTypesRef.current.has(type),
+    []
+  );
+
+  /** 在流式循环中检查暂停/停止 — 暂停时阻塞等待，停止时返回 true 表示应中断 */
+  async function checkPauseStop(type: GenerationTaskType): Promise<boolean> {
+    if (stoppedTypesRef.current.has(type)) return true;
+    if (pausedTypesRef.current.has(type)) {
+      setTaskProgress(type, '已暂停');
+      await new Promise<void>((resolve) => {
+        pauseResolversRef.current.set(type, resolve);
+      });
+      // 恢复后再检查一次停止
+      if (stoppedTypesRef.current.has(type)) return true;
+    }
+    return false;
+  }
+
+  // ========== 整本书生成（逐章串行，支持暂停/继续/停止） ==========
+
+  const startBookGeneration = useCallback(
+    async (params: {
+      startChapterId: string;
+      pluginId: string;
+      buildInput: (chapterId: string) => any;
+    }): Promise<boolean> => {
+      const { startChapterId, pluginId, buildInput } = params;
+      const type: GenerationTaskType = 'novel_book_generate';
+      const ok = startTask(type);
+      if (!ok) return false;
+
+      // 清理停止状态（重新开始时重置）
+      stoppedTypesRef.current.delete(type);
+      pausedTypesRef.current.delete(type);
+      setTaskPauseStatus(type, 'idle');
+
+      try {
+        const state = loadCreationState();
+        const chapters = state.chapters || [];
+        const startIndex = chapters.findIndex((c) => c.id === startChapterId);
+        if (startIndex === -1) {
+          markTaskDone(type, '起始章节不存在');
+          toast.error('起始章节不存在');
+          return false;
+        }
+
+        const total = chapters.length - startIndex;
+        bookProgressRef.current = {
+          currentIndex: 0,
+          total,
+          currentChapterId: startChapterId,
+          chapterTitle: chapters[startIndex]?.chapterTitle || null,
+          paused: false,
+          stopped: false,
+          done: false,
+        };
+
+        for (let i = startIndex; i < chapters.length; i++) {
+          // 每章开始前检查暂停/停止
+          if (await checkPauseStop(type)) {
+            break;
+          }
+
+          const chapter = chapters[i];
+          bookProgressRef.current = {
+            ...bookProgressRef.current!,
+            currentIndex: i - startIndex,
+            currentChapterId: chapter.id,
+            chapterTitle: chapter.chapterTitle,
+          };
+          setTaskProgress(type, `第 ${i - startIndex + 1}/${total} 章生成中：${chapter.chapterTitle}`);
+
+          // 如果本章已生成（有内容），跳过（继续生成的情况不重写已有内容，仅生成未生成章节）
+          if (chapter.content && chapter.content.trim().length > 0) {
+            // 已生成章节直接跳过
+            continue;
+          }
+
+          // 启动单章生成 —— 这里内联实现以支持每 chunk 检查暂停
+          chapterStreamingRef.current = chapter.content || '';
+          generatingChapterIdRef.current = chapter.id;
+
+          const input = buildInput(chapter.id);
+          // 已有内容的话从末尾续写（这里整本书模式下都是新章节，直接生成）
+          const stream = capabilityClient.load(pluginId).callStream('textGenerate', input);
+          let full = chapter.content ? chapter.content.replace(/<\/?p>/g, '').split('\n').join('\n') : '';
+
+          try {
+            for await (const chunk of stream as any) {
+              if (stoppedTypesRef.current.has(type)) {
+                break;
+              }
+              const piece = chunk.content ?? chunk.response ?? '';
+              if (piece) {
+                full += piece;
+                chapterStreamingRef.current = full;
+                setTaskProgress(type, `第 ${i - startIndex + 1}/${total} 章生成中：${chapter.chapterTitle}`);
+                // 每 chunk 实时写入 storage
+                const st = loadCreationState();
+                const updatedChapters: IChapter[] = st.chapters.map((c) => {
+                  if (c.id !== chapter.id) return c;
+                  const htmlContent = full
+                    .split('\n')
+                    .filter((p) => p.trim())
+                    .map((p) => `<p>${p}</p>`)
+                    .join('');
+                  return {
+                    ...c,
+                    content: htmlContent,
+                    status: 'generated' as const,
+                    lastModified: Date.now(),
+                  };
+                });
+                let newState: ICreationState = {
+                  ...st,
+                  chapters: updatedChapters,
+                };
+                if (newState.currentArticleId) {
+                  newState = updateCurrentArticle(newState, (a) => ({
+                    ...a,
+                    chapters: updatedChapters,
+                  }));
+                }
+                saveCreationState(newState);
+              }
+
+              // 每 chunk 后检查暂停
+              if (pausedTypesRef.current.has(type)) {
+                if (await checkPauseStop(type)) {
+                  break;
+                }
+                setTaskProgress(type, `第 ${i - startIndex + 1}/${total} 章生成中：${chapter.chapterTitle}`);
+              }
+            }
+          } catch (err) {
+            const errMsg = extractErrorMessage(err);
+            logger.error(`整本书生成 第${i + 1}章失败:`, errMsg);
+            toast.error(`${chapter.chapterTitle} 生成失败：${errMsg}`);
+          }
+
+          // 本章结束后检查是否被停止
+          if (stoppedTypesRef.current.has(type)) {
+            break;
+          }
+        }
+
+        const wasStopped = stoppedTypesRef.current.has(type);
+        bookProgressRef.current = {
+          ...bookProgressRef.current!,
+          paused: pausedTypesRef.current.has(type),
+          stopped: wasStopped,
+          done: !wasStopped,
+        };
+
+        if (wasStopped) {
+          markTaskDone(type, '已停止');
+          toast.info('已停止生成，已生成内容已保存');
+          return false;
+        }
+
+        markTaskDone(type);
+        toast.success('全书生成完成');
+        return true;
+      } catch (err) {
+        const errMsg = extractErrorMessage(err);
+        logger.error('整本书生成失败:', errMsg);
+        markTaskDone(type, errMsg);
+        toast.error(`整本书生成失败：${errMsg}`);
+        return false;
+      } finally {
+        window.setTimeout(() => {
+          generatingChapterIdRef.current = null;
+        }, 1000);
+      }
+    },
+    [startTask, setTaskProgress, markTaskDone, setTaskPauseStatus]
+  );
+
+  const getBookProgress = useCallback(
+    () => bookProgressRef.current,
+    []
+  );
 
   // 从 Error 对象中提取可读的错误信息
   function extractErrorMessage(err: unknown): string {
@@ -595,6 +880,13 @@ ${outline}
       getChapterStreamingText,
       isChapterGenerating,
       getGeneratingChapterId,
+      pauseTask,
+      resumeTask,
+      stopTask,
+      getTaskPauseStatus,
+      isTaskStopped,
+      startBookGeneration,
+      getBookProgress,
     }),
     [
       tasks,
@@ -611,6 +903,13 @@ ${outline}
       getChapterStreamingText,
       isChapterGenerating,
       getGeneratingChapterId,
+      pauseTask,
+      resumeTask,
+      stopTask,
+      getTaskPauseStatus,
+      isTaskStopped,
+      startBookGeneration,
+      getBookProgress,
     ]
   );
 
