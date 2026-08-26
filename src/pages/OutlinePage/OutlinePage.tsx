@@ -1,13 +1,25 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, ArrowLeft, Lightbulb, Loader2, Tag } from 'lucide-react';
+import { Sparkles, ArrowLeft, Lightbulb, Loader2, Tag, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import type { ICategory, IOutlineCard } from '@/data/novel';
-import { loadCreationState, saveCreationState } from '@/lib/storage';
+import type { ICategory, IOutlineCard, NovelLengthType } from '@/data/novel';
+import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
+import { loadCreationState, saveCreationState, createArticle, addArticle } from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
 
 export default function OutlinePage() {
@@ -18,6 +30,11 @@ export default function OutlinePage() {
   const { startOutlineBatch, isTaskRunning, getOutlineStreamingText, tasks } = useGeneration();
   const loading = isTaskRunning('outline_batch');
   const pollRef = useRef<number | null>(null);
+  // 创建文章弹窗
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [pendingOutline, setPendingOutline] = useState<IOutlineCard | null>(null);
+  const [articleTitle, setArticleTitle] = useState('');
+  const [articleLength, setArticleLength] = useState<NovelLengthType>('medium');
 
   useEffect(() => {
     const state = loadCreationState();
@@ -86,13 +103,32 @@ export default function OutlinePage() {
 
   const handleSelectOutline = useCallback(
     (outline: IOutlineCard) => {
-      const state = loadCreationState();
-      saveCreationState({ ...state, selectedOutline: outline });
-      toast.success(`已选择「${outline.title}」`);
-      navigate('/expansion');
+      setPendingOutline(outline);
+      setArticleTitle(outline.title);
+      setArticleLength('medium');
+      setCreateDialogOpen(true);
     },
-    [navigate]
+    []
   );
+
+  const handleConfirmCreate = useCallback(() => {
+    if (!pendingOutline) return;
+    const state = loadCreationState();
+    const title = articleTitle.trim() || pendingOutline.title;
+    const article = createArticle({
+      title,
+      lengthType: articleLength,
+      category: state.selectedCategory,
+      outline: pendingOutline,
+    });
+    const newState = addArticle(state, article);
+    // 同时记录 selectedOutline 保持兼容
+    saveCreationState({ ...newState, selectedOutline: pendingOutline });
+    toast.success(`已创建「${title}」`);
+    setCreateDialogOpen(false);
+    setPendingOutline(null);
+    navigate('/expansion');
+  }, [pendingOutline, articleTitle, articleLength, navigate]);
 
   const handleBack = () => {
     navigate('/');
@@ -108,17 +144,13 @@ export default function OutlinePage() {
         </Button>
 
         <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
-          <div>
-            <div className="mb-2 flex items-center gap-2">
-              <Badge variant="outline" className="gap-1">
-                <Lightbulb className="size-3" />
-                第二步
-              </Badge>
-              {category && (
-                <Badge variant="secondary">当前品类：{category.name}</Badge>
-              )}
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight md:text-4xl">一句话故事大纲</h1>
+            <div>
+              <div className="mb-2 flex items-center gap-2">
+                {category && (
+                  <Badge variant="secondary">当前品类：{category.name}</Badge>
+                )}
+              </div>
+              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">一句话故事大纲</h1>
             <p className="mt-2 max-w-xl text-muted-foreground">
               基于选定品类，AI 批量生成高概念（High Concept）一句话故事点子，
               选择最打动你的那个，进入下一步骨架拓展
@@ -233,9 +265,83 @@ export default function OutlinePage() {
             ))}
           </motion.div>
         )}
-      </AnimatePresence>
-    </div>
-  );
+       </AnimatePresence>
+
+      {/* 创建文章弹窗 */}
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookOpen className="size-5 text-primary" />
+              创建新文章
+            </DialogTitle>
+            <DialogDescription>
+              基于选定的一句话大纲，创建一篇新的小说文章。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="article-title">文章标题</Label>
+              <Input
+                id="article-title"
+                value={articleTitle}
+                onChange={(e) => setArticleTitle(e.target.value)}
+                placeholder="请输入文章标题"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>篇幅类型</Label>
+              <RadioGroup
+                value={articleLength}
+                onValueChange={(v) => setArticleLength(v as NovelLengthType)}
+                className="grid grid-cols-3 gap-2"
+              >
+                {(Object.keys(NOVEL_LENGTH_OPTIONS) as NovelLengthType[]).map((key) => {
+                  const opt = NOVEL_LENGTH_OPTIONS[key];
+                  return (
+                    <Label
+                      key={key}
+                      className={`flex cursor-pointer flex-col items-start gap-1 rounded-lg border p-3 transition-colors ${
+                        articleLength === key
+                          ? 'border-primary bg-primary/5 text-primary'
+                          : 'border-border hover:bg-accent/50'
+                      }`}
+                    >
+                      <RadioGroupItem value={key} className="sr-only" />
+                      <span className="text-sm font-medium">{opt.label}</span>
+                      <span className="text-xs text-muted-foreground">{opt.wordRange}</span>
+                      <span className="text-xs text-muted-foreground">{opt.chapterRange}</span>
+                    </Label>
+                  );
+                })}
+              </RadioGroup>
+            </div>
+
+            {pendingOutline && (
+              <div className="rounded-lg bg-muted/50 p-3">
+                <div className="text-xs font-medium text-muted-foreground mb-1">选定大纲</div>
+                <div className="text-sm font-medium">{pendingOutline.title}</div>
+                <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+                  {pendingOutline.concept}
+                </p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreateDialogOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleConfirmCreate} disabled={!articleTitle.trim()}>
+              确认创建
+            </Button>
+          </DialogFooter>
+       </DialogContent>
+     </Dialog>
+   </div>
+ );
 }
 
 // 解析流式生成的文本为大纲卡片

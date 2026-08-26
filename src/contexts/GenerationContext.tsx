@@ -11,14 +11,8 @@ import {
 } from 'react';
 import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import { toast } from 'sonner';
-import { loadCreationState, saveCreationState } from '@/lib/storage';
-import type {
-  ICategory,
-  ICategoryResearchData,
-  IOutlineCard,
-  IStorySkeleton,
-  IChapter,
-} from '@/data/novel';
+import { loadCreationState, saveCreationState, updateCurrentArticle, setArticleSkeleton } from '@/lib/storage';
+import type { ICategory, ICategoryResearchData, IOutlineCard, IStorySkeleton, IChapter, ICreationState } from '@/data/novel';
 
 export type GenerationTaskType =
   | 'category_research'
@@ -302,7 +296,12 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
 
         const mapped = mapper(result);
         const state = loadCreationState();
-        saveCreationState({ ...state, storySkeleton: mapped });
+        // 同时写入全局兼容字段和当前文章
+        let newState: ICreationState = { ...state, storySkeleton: mapped };
+        if (newState.currentArticleId) {
+          newState = setArticleSkeleton(newState, mapped);
+        }
+        saveCreationState(newState);
         markTaskDone(type);
         toast.success('故事骨架生成完成');
         return mapped;
@@ -454,11 +453,20 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
                 lastModified: Date.now(),
               };
             });
-            saveCreationState({
+            let newState: ICreationState = {
               ...state,
               chapters: updatedChapters,
               currentChapterId: state.currentChapterId || chapterId,
-            });
+            };
+            // 同步写入当前文章
+            if (newState.currentArticleId) {
+              newState = updateCurrentArticle(newState, (a) => ({
+                ...a,
+                chapters: updatedChapters,
+                currentChapterId: a.currentChapterId || chapterId,
+              }));
+            }
+            saveCreationState(newState);
           }
         }
 

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Sparkles,
   ArrowLeft,
-  GitBranch,
   Loader2,
   Users,
   Globe,
@@ -12,6 +11,7 @@ import {
   BookOpen,
   Check,
   Edit3,
+  FileText,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -22,9 +22,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import type { IOutlineCard, IStorySkeleton, IChapter } from '@/data/novel';
-import { loadCreationState, saveCreationState } from '@/lib/storage';
+import type { IOutlineCard, IStorySkeleton, IChapter, INovelArticle } from '@/data/novel';
+import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
+import {
+  loadCreationState,
+  saveCreationState,
+  getCurrentArticle,
+  updateCurrentArticle,
+  setArticleSkeleton,
+  setCurrentArticle,
+} from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
+import ArticleSwitcher from '@/components/ArticleSwitcher';
 
 const SECTIONS = [
   { id: 'characters', label: '人物设定', icon: Users },
@@ -36,55 +45,117 @@ const SECTIONS = [
 
 export default function OutlineExpansionPage() {
   const navigate = useNavigate();
-  const [outline, setOutline] = useState<IOutlineCard | null>(null);
+  const [articles, setArticles] = useState<INovelArticle[]>([]);
+  const [currentArticleId, setCurrentArticleIdState] = useState<string | null>(null);
   const [skeleton, setSkeleton] = useState<IStorySkeleton | null>(null);
   const [activeSection, setActiveSection] = useState('characters');
   const [editingField, setEditingField] = useState<string | null>(null);
   const { startStorySkeleton, isTaskRunning, tasks } = useGeneration();
   const loading = isTaskRunning('story_skeleton');
 
+  const currentArticle = articles.find((a) => a.id === currentArticleId) || null;
+  const outline = currentArticle?.outline || null;
+  const articleLength = currentArticle?.lengthType || 'medium';
+
+  // 加载文章列表 + 当前文章数据
   useEffect(() => {
     const state = loadCreationState();
-    if (state.selectedOutline) {
-      setOutline(state.selectedOutline);
-    }
-    if (state.storySkeleton) {
-      setSkeleton(state.storySkeleton);
+    setArticles(state.articles);
+    setCurrentArticleIdState(state.currentArticleId);
+    const article = getCurrentArticle(state);
+    if (article?.storySkeleton) {
+      setSkeleton(article.storySkeleton);
     }
   }, []);
 
-  // 生成完成后读最终数据（切页面回来也能拿到）
+  // 生成完成后从当前文章读取
   useEffect(() => {
     const doneTask = tasks.find((t) => t.type === 'story_skeleton' && t.status === 'done');
     if (doneTask) {
       const state = loadCreationState();
-      if (state.storySkeleton) {
-        setSkeleton(state.storySkeleton);
+      const article = getCurrentArticle(state);
+      if (article?.storySkeleton) {
+        setSkeleton(article.storySkeleton);
+        setArticles(state.articles);
       }
     }
   }, [tasks]);
 
+  // 切换文章
+  const handleSwitchArticle = useCallback(
+    (articleId: string) => {
+      const state = loadCreationState();
+      const next = setCurrentArticle(state, articleId);
+      saveCreationState(next);
+      setArticles(next.articles);
+      setCurrentArticleIdState(next.currentArticleId);
+      const article = next.articles.find((a) => a.id === articleId) || null;
+      setSkeleton(article?.storySkeleton || null);
+    },
+    []
+  );
+
   const generateSkeleton = useCallback(async () => {
-    if (!outline) {
-      toast.warning('请先选择一个故事大纲');
+    if (!currentArticle || !currentArticle.outline) {
+      toast.warning('请先选择一句话大纲并创建文章');
       navigate('/outline');
       return;
     }
 
-    const result = await startStorySkeleton(outline.concept, mapApiToSkeleton);
+    const result = await startStorySkeleton(currentArticle.outline.concept, mapApiToSkeleton);
     if (result) {
-      setSkeleton(result);
+      // 篇幅影响章节规划数量
+      const targetChapters = NOVEL_LENGTH_OPTIONS[currentArticle.lengthType].suggestedChapters;
+      let chapterPlan = result.chapterPlan;
+      if (chapterPlan.length < targetChapters && chapterPlan.length > 0) {
+        // 按比例扩展中间章节概要，简单复制并递增编号
+        const base = chapterPlan;
+        const expanded = [...base];
+        while (expanded.length < targetChapters) {
+          const midIdx = Math.floor(base.length / 2);
+          const template = base[midIdx];
+          const newIdx = expanded.length + 1;
+          expanded.splice(midIdx, 0, {
+            ...template,
+            id: `ch-auto-${Date.now()}-${newIdx}`,
+            chapterNumber: String(newIdx),
+            chapterTitle: `第${newIdx}章 剧情发展`,
+            chapterSummary: `剧情进一步发展，承上启下。（自动扩展章节，建议人工调整）`,
+            coreEvent: template.coreEvent,
+          });
+        }
+        chapterPlan = expanded.map((ch, i) => ({
+          ...ch,
+          chapterNumber: String(i + 1),
+        }));
+      }
+      const adjustedResult = { ...result, chapterPlan };
+
+      // 写入当前文章
+      const state = loadCreationState();
+      const chapters: IChapter[] = adjustedResult.chapterPlan.map((meta) => ({
+        ...meta,
+        id: meta.id,
+        content: '',
+        status: 'unwritten' as const,
+        lastModified: Date.now(),
+      }));
+      const newState = setArticleSkeleton(state, adjustedResult, chapters);
+      saveCreationState(newState);
+      setSkeleton(adjustedResult);
+      setArticles(newState.articles);
     }
-  }, [outline, navigate, startStorySkeleton]);
+  }, [currentArticle, navigate, startStorySkeleton]);
 
   const handleConfirm = useCallback(() => {
-    if (!skeleton) return;
+    if (!skeleton || !currentArticleId) return;
     const state = loadCreationState();
 
-    // 只有章节列表为空时才从骨架初始化，避免覆盖已有的正文内容
+    // 只有章节列表为空时才从骨架初始化
     let chapters: IChapter[];
-    if (state.chapters && state.chapters.length > 0) {
-      chapters = state.chapters;
+    const current = state.articles.find((a) => a.id === state.currentArticleId);
+    if (current && current.chapters.length > 0) {
+      chapters = current.chapters;
     } else {
       chapters = skeleton.chapterPlan.map((meta) => ({
         ...meta,
@@ -95,24 +166,24 @@ export default function OutlineExpansionPage() {
       }));
     }
 
-    const newState = {
-      ...state,
-      storySkeleton: skeleton,
-      chapters,
-      currentChapterId: state.currentChapterId || chapters[0]?.id || null,
-    };
+    const newState = setArticleSkeleton(state, skeleton, chapters);
     saveCreationState(newState);
     toast.success('骨架已确认，开始创作吧！');
     navigate('/novel');
-  }, [skeleton, navigate]);
+  }, [skeleton, currentArticleId, navigate]);
 
   const updateSkeleton = useCallback((updater: (prev: IStorySkeleton) => IStorySkeleton) => {
     setSkeleton((prev) => {
       if (!prev) return prev;
       const next = updater(prev);
-      // 防抖持久化：编辑完成后写入 storage
+      // 写入当前文章
       const state = loadCreationState();
-      saveCreationState({ ...state, storySkeleton: next });
+      const newState = updateCurrentArticle(state, (a) => ({
+        ...a,
+        storySkeleton: next,
+      }));
+      saveCreationState(newState);
+      setArticles(newState.articles);
       return next;
     });
   }, []);
@@ -138,118 +209,97 @@ export default function OutlineExpansionPage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 md:px-6 md:py-12">
-      {/* 顶部 */}
-      <section className="mb-8 md:mb-10">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigate('/outline')}
-          className="mb-4 gap-1"
-        >
-          <ArrowLeft className="size-4" />
-          返回一句话大纲
-        </Button>
-
-        <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
+    <div className="mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-12">
+      {/* 顶部标题区 */}
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={() => navigate('/outline')} className="gap-1">
+            <ArrowLeft className="size-4" />
+            返回一句话大纲
+          </Button>
           <div>
-            <div className="mb-2 flex items-center gap-2">
-              <Badge variant="outline" className="gap-1">
-                <GitBranch className="size-3" />
-                第三步
-              </Badge>
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight md:text-4xl">故事骨架拓展</h1>
+            <h1 className="text-3xl font-bold tracking-tight">故事骨架拓展</h1>
             <p className="mt-2 max-w-xl text-muted-foreground">
               AI 将一句话大纲拓展为完整的故事架构，涵盖人物、世界观、剧情节点和章节规划，
               你可以直接编辑微调
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button
-              onClick={generateSkeleton}
-              disabled={loading || !outline}
-              size="lg"
-              className="gap-2"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  生成中...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="size-4" />
-                  AI 生成骨架
-                </>
-              )}
-            </Button>
-            {skeleton && (
-              <Button onClick={handleConfirm} size="lg" variant="secondary" className="gap-2">
-                <Check className="size-4" />
-                确认骨架，开始创作
-              </Button>
-            )}
-          </div>
         </div>
+        <ArticleSwitcher
+          articles={articles}
+          currentArticleId={currentArticleId}
+          onSwitch={handleSwitchArticle}
+        />
+      </div>
 
-        {outline && (
-          <Card className="mt-6 border-primary/20 bg-primary/5">
-            <CardContent className="p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
-                  <GitBranch className="size-5" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">当前大纲：{outline.title}</div>
-                  <div className="mt-1 text-sm text-muted-foreground">{outline.concept}</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </section>
-
-      {/* 未选大纲提示 */}
-      {!outline && !loading && (
+      {/* 无文章空状态 */}
+      {!currentArticle && (
         <div className="rounded-xl border border-dashed border-border bg-card/30 p-16 text-center">
           <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary/10">
-            <GitBranch className="size-8 text-primary" />
+            <FileText className="size-8 text-primary" />
           </div>
-          <h3 className="text-lg font-medium">还没有选定大纲</h3>
+          <h3 className="text-lg font-medium">暂无文章</h3>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            请先回到一句话大纲页面，选择一个你感兴趣的故事点子
+            请先前往一句话大纲页面，选择一个故事点子并创建文章
           </p>
           <Button className="mt-4" onClick={() => navigate('/outline')}>
-            去选择大纲
+            去创建文章
           </Button>
         </div>
       )}
 
-      {/* 加载中 */}
-      {loading && (
-        <div className="rounded-xl border border-border bg-card/30 p-16 text-center">
-          <Loader2 className="mx-auto mb-4 size-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">
-            AI 正在构建故事骨架，包括人物设定、世界观、剧情节点等，请稍候...
-          </p>
-        </div>
-      )}
-
-      {/* 空状态 */}
-      {outline && !skeleton && !loading && (
-        <div className="rounded-xl border border-dashed border-border bg-card/30 p-16 text-center">
-          <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary/10">
-            <Layers className="size-8 text-primary" />
+      {/* 有文章但还没生成骨架 */}
+      {currentArticle && !skeleton && !loading && (
+        <div className="rounded-xl border border-border bg-card p-8">
+          <div className="flex items-start gap-4">
+            <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <Sparkles className="size-6 text-primary" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold">开始生成故事骨架</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                AI 将基于一句话大纲，为你生成完整的故事架构（人物设定、世界观、剧情节点、起承转合、章节规划）。
+                篇幅类型：{NOVEL_LENGTH_OPTIONS[articleLength].label}（{NOVEL_LENGTH_OPTIONS[articleLength].chapterRange}）
+              </p>
+              {currentArticle.outline && (
+                <div className="mt-4 rounded-lg bg-muted/50 p-3">
+                  <div className="text-xs font-medium text-muted-foreground mb-1">当前大纲</div>
+                  <div className="text-sm font-medium">{currentArticle.outline.title}</div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {currentArticle.outline.concept}
+                  </p>
+                </div>
+              )}
+              <Button onClick={generateSkeleton} disabled={loading} className="mt-4 gap-2">
+                {loading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    生成中...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="size-4" />
+                    AI 生成骨架
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
-          <h3 className="text-lg font-medium">构建你的故事世界</h3>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            点击「AI 生成骨架」，系统将基于选定的一句话大纲，
-            自动生成完整的故事架构
-          </p>
         </div>
       )}
 
+      {/* 加载中 */}
+      {loading && !skeleton && (
+        <div className="rounded-xl border border-border bg-card/30 p-16 text-center">
+          <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary/10">
+            <Loader2 className="size-8 animate-spin text-primary" />
+          </div>
+          <h3 className="text-lg font-medium">正在生成故事骨架</h3>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            AI 正在为你构建完整的故事架构，请稍候...
+          </p>
+        </div>
+      )}
       {/* 骨架内容 */}
       {skeleton && !loading && (
         <div className="flex flex-col gap-8 lg:flex-row">

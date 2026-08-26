@@ -175,14 +175,8 @@ export default function CategoryResearchPage() {
     <div className="mx-auto max-w-7xl px-4 py-8 md:px-6 md:py-12">
       {/* 顶部 Hero 区 */}
       <section className="mb-10 flex flex-col items-start justify-between gap-6 md:mb-12 md:flex-row md:items-center">
-        <div>
-          <div className="mb-2 flex items-center gap-2">
-            <Badge variant="outline" className="gap-1">
-              <BarChart3 className="size-3" />
-              第一步
-            </Badge>
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight md:text-4xl">品类市场调研</h1>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight md:text-4xl">品类市场调研</h1>
           <p className="mt-2 text-muted-foreground">
             AI 分析各小说品类的市场热度、竞争格局与增长潜力，帮你找到最适合的创作赛道
           </p>

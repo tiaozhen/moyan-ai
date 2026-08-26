@@ -1,20 +1,31 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Save, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, BookOpen, Save, Loader2, Sparkles, FileText, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
-import type { IChapter, IStorySkeleton } from '@/data/novel';
-import { loadCreationState, saveCreationState } from '@/lib/storage';
+import type { IChapter, IStorySkeleton, INovelArticle } from '@/data/novel';
+import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
+import {
+  loadCreationState,
+  saveCreationState,
+  getCurrentArticle,
+  setCurrentArticle,
+  updateCurrentArticle,
+  setArticleCurrentChapterId,
+} from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { buildChapterGenerationInput } from '@/lib/chapter-context';
+import ArticleSwitcher from '@/components/ArticleSwitcher';
 import ChapterList from './ChapterList';
 import EditorToolbar from './EditorToolbar';
 import AIAssistantPanel from './AIAssistantPanel';
 
 export default function NovelGeneratorPage() {
   const navigate = useNavigate();
+  const [articles, setArticles] = useState<INovelArticle[]>([]);
+  const [currentArticleId, setCurrentArticleIdState] = useState<string | null>(null);
   const [chapters, setChapters] = useState<IChapter[]>([]);
   const [currentChapterId, setCurrentChapterId] = useState<string | null>(null);
   const [skeleton, setSkeleton] = useState<IStorySkeleton | null>(null);
@@ -33,37 +44,54 @@ export default function NovelGeneratorPage() {
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
 
-  // 加载状态
+  const currentArticle = articles.find((a) => a.id === currentArticleId) || null;
+
+  // 加载文章数据
   useEffect(() => {
     const state = loadCreationState();
-    if (state.chapters && state.chapters.length > 0) {
-      setChapters(state.chapters);
-      setCurrentChapterId(state.currentChapterId || state.chapters[0].id);
-    }
-    if (state.storySkeleton) {
-      setSkeleton(state.storySkeleton);
+    setArticles(state.articles);
+    setCurrentArticleIdState(state.currentArticleId);
+    const article = getCurrentArticle(state);
+    if (article) {
+      setChapters(article.chapters);
+      setCurrentChapterId(article.currentChapterId || article.chapters[0]?.id || null);
+      setSkeleton(article.storySkeleton);
     }
   }, []);
+
+  // 切换文章
+  const handleSwitchArticle = useCallback(
+    (articleId: string) => {
+      const state = loadCreationState();
+      const next = setCurrentArticle(state, articleId);
+      saveCreationState(next);
+      const article = next.articles.find((a) => a.id === articleId) || null;
+      setArticles(next.articles);
+      setCurrentArticleIdState(next.currentArticleId);
+      setChapters(article?.chapters || []);
+      setCurrentChapterId(article?.currentChapterId || article?.chapters[0]?.id || null);
+      setSkeleton(article?.storySkeleton || null);
+      setGhostText('');
+    },
+    []
+  );
 
   // 整章生成过程中，轮询 storage 同步最新内容到编辑器（后台生成也能看到进度）
   useEffect(() => {
     if (!isChapterGenerating) return;
     const timer = window.setInterval(() => {
       const state = loadCreationState();
+      const article = getCurrentArticle(state);
       const genId = getGeneratingChapterId();
-      if (genId) {
-        const genChapter = state.chapters.find((c) => c.id === genId);
+      if (genId && article) {
+        const genChapter = article.chapters.find((c) => c.id === genId);
         if (genChapter) {
-          // 更新内存中的章节列表
           setChapters((prev) =>
             prev.map((c) => (c.id === genId ? { ...genChapter } : c))
           );
-          // 如果正在编辑的就是生成中的章节，同步编辑器内容
           if (genId === currentChapterId && editorRef.current) {
             if (editorRef.current.innerHTML !== genChapter.content) {
-              // 保留光标位置不便，直接同步内容
               editorRef.current.innerHTML = genChapter.content || '';
-              // 滚动到底部，跟随生成进度
               editorRef.current.scrollTop = editorRef.current.scrollHeight;
             }
           }
@@ -76,12 +104,12 @@ export default function NovelGeneratorPage() {
   // 整章生成完成后，重新读一次最新数据
   useEffect(() => {
     if (isChapterGenerating) return;
-    // 从 running 变为 not running 时刷新一次
     const state = loadCreationState();
-    if (state.chapters.length > 0) {
-      setChapters(state.chapters);
+    const article = getCurrentArticle(state);
+    if (article && article.chapters.length > 0) {
+      setChapters(article.chapters);
       if (currentChapterId && editorRef.current) {
-        const ch = state.chapters.find((c) => c.id === currentChapterId);
+        const ch = article.chapters.find((c) => c.id === currentChapterId);
         if (ch && editorRef.current.innerHTML !== ch.content) {
           editorRef.current.innerHTML = ch.content || '';
         }
@@ -100,9 +128,9 @@ export default function NovelGeneratorPage() {
     }
   }, [currentChapterId, currentChapter?.id]);
 
-  // 自动保存：更新内存 state + 写入本地存储
+  // 自动保存：更新内存 state + 写入当前文章
   const autoSave = useCallback(() => {
-    if (!currentChapterId || !editorRef.current) return;
+    if (!currentChapterId || !currentArticleId || !editorRef.current) return;
     const content = editorRef.current.innerHTML;
 
     setChapters((prev) => {
@@ -111,16 +139,18 @@ export default function NovelGeneratorPage() {
           ? { ...c, content, status: (c.status === 'unwritten' ? 'generated' : 'edited') as IChapter['status'], lastModified: Date.now() }
           : c
       );
-      // 同步写入本地存储
+      // 写入当前文章
       const state = loadCreationState();
-      saveCreationState({
-        ...state,
+      const newState = updateCurrentArticle(state, (a) => ({
+        ...a,
         chapters: updated,
         currentChapterId,
-      });
+      }));
+      saveCreationState(newState);
+      setArticles(newState.articles);
       return updated;
     });
-  }, [currentChapterId]);
+  }, [currentChapterId, currentArticleId]);
 
   const handleInput = useCallback(() => {
     if (saveTimerRef.current) {
@@ -185,26 +215,24 @@ export default function NovelGeneratorPage() {
     autoSave();
   }, [autoSave]);
 
-  // 选章节
-  const handleSelectChapter = useCallback((id: string) => {
-    // 先保存当前章节内容到 storage
-    if (currentChapterId && editorRef.current) {
-      const content = editorRef.current.innerHTML;
+  const handleSelectChapter = useCallback(
+    (chapterId: string) => {
+      // 切换前先保存当前章节
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      autoSave();
+      setCurrentChapterId(chapterId);
+      // 写入当前文章的当前章节
       const state = loadCreationState();
-      const updatedChapters: IChapter[] = state.chapters.map((c) =>
-        c.id === currentChapterId ? { ...c, content, lastModified: Date.now() } : c
-      );
-      saveCreationState({
-        ...state,
-        chapters: updatedChapters,
-        currentChapterId: id,
-      });
-      setChapters(updatedChapters);
-    }
-    setCurrentChapterId(id);
-    setGhostText('');
-    setToolbarVisible(false);
-  }, [currentChapterId]);
+      const newState = setArticleCurrentChapterId(state, chapterId);
+      saveCreationState(newState);
+      setArticles(newState.articles);
+      setGhostText('');
+    },
+    [autoSave]
+  );
 
   // AI 插入文本（续写/末尾添加）
   const handleInsertText = useCallback(
@@ -335,36 +363,46 @@ export default function NovelGeneratorPage() {
   );
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col md:h-[calc(100vh-4rem)]">
+    <div className="flex h-[calc(100vh-4rem)] flex-col">
       {/* 顶部标题栏 */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 md:px-6">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 md:px-6">
+        <div className="flex items-center gap-2 min-w-0">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => navigate('/expansion')}
-            className="gap-1"
+            className="gap-1 shrink-0"
           >
             <ArrowLeft className="size-4" />
-            返回
+            <span className="hidden md:inline">返回骨架</span>
           </Button>
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <BookOpen className="size-4" />
-            </div>
-            <div>
-              <div className="text-sm font-semibold">
-                {currentChapter ? currentChapter.chapterTitle : '小说创作'}
+          {currentArticle ? (
+            <>
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <BookOpen className="size-4" />
               </div>
-              <div className="text-xs text-muted-foreground">
-                {currentChapter
-                  ? `第${currentChapter.chapterNumber}章 · ${chapters.length}章`
-                  : '请选择章节'}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">
+                  {currentChapter ? currentChapter.chapterTitle : '小说创作'}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {currentArticle.title} · {chapters.length}章
+                </div>
               </div>
-            </div>
-          </div>
+            </>
+          ) : (
+            <div className="text-sm text-muted-foreground">未选择文章</div>
+          )}
         </div>
         <div className="flex items-center gap-2">
+          {currentArticle && (
+            <ArticleSwitcher
+              articles={articles}
+              currentArticleId={currentArticleId}
+              onSwitch={handleSwitchArticle}
+              showProgress
+            />
+          )}
           <Badge variant="outline" className="hidden md:inline-flex gap-1">
             <Sparkles className="size-3" />
             AI 创作模式
@@ -373,7 +411,7 @@ export default function NovelGeneratorPage() {
             variant="secondary"
             size="sm"
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !currentArticle}
             className="gap-1"
           >
             {saving ? (
@@ -386,8 +424,29 @@ export default function NovelGeneratorPage() {
         </div>
       </div>
 
+      {/* 无文章空状态 */}
+      {!currentArticle && (
+        <div className="flex flex-1 items-center justify-center">
+          <Card className="w-full max-w-md border-dashed bg-card/30 mx-4">
+            <div className="p-12 text-center">
+              <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary/10">
+                <FileText className="size-8 text-primary" />
+              </div>
+              <h3 className="text-lg font-medium">暂无文章</h3>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
+                请先前往一句话大纲页面，选择一个故事点子并创建文章
+              </p>
+              <Button className="mt-4" onClick={() => navigate('/outline')}>
+                去创建文章
+              </Button>
+            </div>
+          </Card>
+        </div>
+       )}
+
       {/* 三栏布局 */}
-      <div className="flex flex-1 overflow-hidden">
+      {currentArticle && (
+        <div className="flex flex-1 overflow-hidden">
         {/* 左侧章节列表 */}
         <aside className="hidden w-64 shrink-0 border-r border-border md:block">
           <ChapterList
@@ -483,6 +542,7 @@ export default function NovelGeneratorPage() {
           />
         </aside>
       </div>
+      )}
 
       {/* 悬浮工具栏 */}
       <EditorToolbar

@@ -1,4 +1,4 @@
-// EXPORTS: ICategory, ICategoryResearchData, IOutlineCard, ICharacter, IWorldSetting, IPlotNode, IStructure, IChapterMeta, IChapter, IStorySkeleton, ICreationState, INITIAL_CREATION_STATE
+// EXPORTS: ICategory, ICategoryResearchData, IOutlineCard, ICharacter, IWorldSetting, IPlotNode, IStructure, IChapterMeta, IChapter, IStorySkeleton, INovelArticle, NovelLengthType, ICreationState, INITIAL_CREATION_STATE
 // 小说创作全流程辅助平台 - 类型定义与初始状态
 
 // 品类调研单项
@@ -106,15 +106,42 @@ export interface IStorySkeleton {
   chapterPlan: IChapterMeta[];
 }
 
+// 文章篇幅类型
+export type NovelLengthType = 'short' | 'medium' | 'long';
+
+export const NOVEL_LENGTH_OPTIONS: Record<NovelLengthType, { label: string; wordRange: string; chapterRange: string; suggestedChapters: number }> = {
+  short: { label: '短篇', wordRange: '约1-3万字', chapterRange: '建议5-15章', suggestedChapters: 10 },
+  medium: { label: '中篇', wordRange: '约10-30万字', chapterRange: '建议30-80章', suggestedChapters: 50 },
+  long: { label: '长篇', wordRange: '约50万字以上', chapterRange: '建议100章以上', suggestedChapters: 100 },
+};
+
+// 单篇文章（独立的创作单元）
+export interface INovelArticle {
+  id: string;
+  title: string;
+  lengthType: NovelLengthType;
+  category: ICategory | null;
+  outline: IOutlineCard | null;
+  storySkeleton: IStorySkeleton | null;
+  chapters: IChapter[];
+  currentChapterId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // 全局创作状态
 export interface ICreationState {
   categoryResearchData: ICategoryResearchData | null;
   selectedCategory: ICategory | null;
   outlineList: IOutlineCard[];
   selectedOutline: IOutlineCard | null;
+  // 以下字段已迁移到单篇文章（INovelArticle），保留仅用于向后兼容旧数据
   storySkeleton: IStorySkeleton | null;
   chapters: IChapter[];
   currentChapterId: string | null;
+  // 多篇文章
+  articles: INovelArticle[];
+  currentArticleId: string | null;
 }
 
 export const INITIAL_CREATION_STATE: ICreationState = {
@@ -125,4 +152,6 @@ export const INITIAL_CREATION_STATE: ICreationState = {
   storySkeleton: null,
   chapters: [],
   currentChapterId: null,
+  articles: [],
+  currentArticleId: null,
 };
