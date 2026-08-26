@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, TrendingUp, Users, Zap, BarChart3, Loader2, CheckCircle2 } from 'lucide-react';
+import { Sparkles, BarChart3, Search, TrendingUp, TrendingDown, BookOpen, Loader2, CheckCircle2, Zap, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
@@ -66,7 +66,15 @@ export default function CategoryResearchPage() {
       const state = loadCreationState();
       saveCreationState({ ...state, selectedCategory: category });
       toast.success(`已选择「${category.name}」品类`);
-      navigate('/outline');
+    },
+    []
+  );
+
+  const handleGenerateOutline = useCallback(
+    (category: ICategory) => {
+      const state = loadCreationState();
+      saveCreationState({ ...state, selectedCategory: category });
+      navigate(`/outline?category=${encodeURIComponent(category.name)}`);
     },
     [navigate]
   );
@@ -473,13 +481,22 @@ export default function CategoryResearchPage() {
                           </div>
                         </div>
 
-                        <Button
-                          className="w-full"
-                          variant="default"
-                          onClick={() => handleSelectCategory(c)}
-                        >
-                          选择此品类
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            className="flex-1"
+                            variant="outline"
+                            onClick={() => handleSelectCategory(c)}
+                          >
+                            选择此品类
+                          </Button>
+                          <Button
+                            className="flex-1 gap-1"
+                            onClick={() => handleGenerateOutline(c)}
+                          >
+                            <Sparkles className="size-3.5" />
+                            生成大纲
+                          </Button>
+                        </div>
                       </CardContent>
                     </Card>
                   </motion.div>

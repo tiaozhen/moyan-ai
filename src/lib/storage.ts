@@ -125,6 +125,21 @@ export function setArticleCurrentChapterId(state: ICreationState, chapterId: str
   return updateCurrentArticle(state, (a) => ({ ...a, currentChapterId: chapterId }));
 }
 
+/** 更新指定文章的当前章节 ID（传 articleId） */
+export function setArticleChapterId(state: ICreationState, articleId: string, chapterId: string | null): ICreationState {
+  return {
+    ...state,
+    articles: state.articles.map((a) =>
+      a.id === articleId ? { ...a, currentChapterId: chapterId } : a
+    ),
+  };
+}
+
+/** 设置当前选中的品类 */
+export function setSelectedCategory(state: ICreationState, category: ICategory | null): ICreationState {
+  return { ...state, selectedCategory: category };
+}
+
 /** 删除指定文章，若为当前文章则自动切换到下一篇或置空 */
 export function deleteArticle(state: ICreationState, articleId: string): ICreationState {
   const remaining = state.articles.filter((a) => a.id !== articleId);

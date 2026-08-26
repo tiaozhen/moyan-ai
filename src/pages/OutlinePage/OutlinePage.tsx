@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Sparkles, ArrowLeft, Lightbulb, Loader2, Tag, BookOpen } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Sparkles, ArrowLeft, Lightbulb, Loader2, Tag, BookOpen, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,15 +16,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { toast } from 'sonner';
 import type { ICategory, IOutlineCard, NovelLengthType } from '@/data/novel';
 import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
-import { loadCreationState, saveCreationState, createArticle, addArticle } from '@/lib/storage';
+import { loadCreationState, saveCreationState, createArticle, addArticle, setSelectedCategory, setCurrentArticle } from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
 
 export default function OutlinePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [category, setCategory] = useState<ICategory | null>(null);
+  const [categories, setCategories] = useState<ICategory[]>([]);
   const [outlines, setOutlines] = useState<IOutlineCard[]>([]);
   const [rawText, setRawText] = useState('');
   const { startOutlineBatch, isTaskRunning, getOutlineStreamingText, tasks } = useGeneration();
@@ -38,13 +47,30 @@ export default function OutlinePage() {
 
   useEffect(() => {
     const state = loadCreationState();
+    // 从品类调研数据中提取可选品类列表
+    if (state.categoryResearchData?.categories) {
+      setCategories(state.categoryResearchData.categories);
+    }
+    // URL 参数中的品类优先
+    const categoryParam = searchParams.get('category');
+    if (categoryParam && state.categoryResearchData?.categories) {
+      const found = state.categoryResearchData.categories.find(
+        (c) => c.name === categoryParam || c.id === categoryParam
+      );
+      if (found) {
+        setCategory(found);
+        const newState = setSelectedCategory(state, found);
+        saveCreationState(newState);
+        return;
+      }
+    }
     if (state.selectedCategory) {
       setCategory(state.selectedCategory);
     }
     if (state.outlineList && state.outlineList.length > 0) {
       setOutlines(state.outlineList);
     }
-  }, []);
+  }, [searchParams]);
 
   // 如果后台正在生成，轮询同步流式文本
   useEffect(() => {
@@ -111,6 +137,21 @@ export default function OutlinePage() {
     []
   );
 
+  const handleCategoryChange = useCallback(
+    (categoryName: string) => {
+      const state = loadCreationState();
+      const found = state.categoryResearchData?.categories.find((c) => c.name === categoryName) || null;
+      if (found) {
+        setCategory(found);
+        const newState = setSelectedCategory(state, found);
+        saveCreationState(newState);
+        setOutlines([]);
+        setRawText('');
+      }
+    },
+    []
+  );
+
   const handleConfirmCreate = useCallback(() => {
     if (!pendingOutline) return;
     const state = loadCreationState();
@@ -121,33 +162,48 @@ export default function OutlinePage() {
       category: state.selectedCategory,
       outline: pendingOutline,
     });
-    const newState = addArticle(state, article);
+    const withArticle = addArticle(state, article);
+    const withCurrent = setCurrentArticle(withArticle, article.id);
     // 同时记录 selectedOutline 保持兼容
-    saveCreationState({ ...newState, selectedOutline: pendingOutline });
+    saveCreationState({ ...withCurrent, selectedOutline: pendingOutline });
     toast.success(`已创建「${title}」`);
     setCreateDialogOpen(false);
     setPendingOutline(null);
-    navigate('/expansion');
+    navigate(`/books/${article.id}`);
   }, [pendingOutline, articleTitle, articleLength, navigate]);
-
-  const handleBack = () => {
-    navigate('/');
-  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 md:px-6 md:py-12">
-      {/* 顶部 */}
-      <section className="mb-10 md:mb-12">
-        <Button variant="ghost" size="sm" onClick={handleBack} className="mb-4 gap-1">
-          <ArrowLeft className="size-4" />
-          返回品类调研
-        </Button>
+        {/* 顶部 */}
+        <section className="mb-10 md:mb-12">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="gap-1">
+              <ArrowLeft className="size-4" />
+              返回品类调研
+            </Button>
+          </div>
 
-        <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
+          <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
             <div>
-              <div className="mb-2 flex items-center gap-2">
-                {category && (
-                  <Badge variant="secondary">当前品类：{category.name}</Badge>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Label className="text-sm text-muted-foreground">当前品类：</Label>
+                <Select
+                  value={category?.name || ''}
+                  onValueChange={handleCategoryChange}
+                >
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="选择一个品类" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.map((c) => (
+                      <SelectItem key={c.id || c.name} value={c.name}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {categories.length === 0 && (
+                  <span className="text-xs text-muted-foreground">先去品类调研生成数据</span>
                 )}
               </div>
               <h1 className="text-3xl font-bold tracking-tight md:text-4xl">一句话故事大纲</h1>
@@ -182,7 +238,7 @@ export default function OutlinePage() {
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
             请先回到品类调研页面，选择一个你感兴趣的小说品类
           </p>
-          <Button className="mt-4" onClick={handleBack}>
+          <Button className="mt-4" onClick={() => navigate('/')}>
             去选择品类
           </Button>
         </div>

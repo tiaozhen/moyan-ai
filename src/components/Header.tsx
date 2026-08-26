@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { BarChart3, Lightbulb, GitBranch, BookOpen, Sun, Moon, PenTool, Loader2, Pause } from 'lucide-react';
+import { BarChart3, Lightbulb, BookOpen, Sun, Moon, PenTool, Loader2, Pause } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from 'next-themes';
 import { useState, useEffect, useMemo } from 'react';
@@ -8,8 +8,7 @@ import { useGeneration } from '@/contexts/GenerationContext';
 const NAV_ITEMS = [
   { path: '/', label: '品类调研', icon: BarChart3 },
   { path: '/outline', label: '一句话大纲', icon: Lightbulb },
-  { path: '/expansion', label: '大纲拓展', icon: GitBranch },
-  { path: '/novel', label: '小说生成', icon: BookOpen },
+  { path: '/books', label: '我的书架', icon: BookOpen },
 ];
 
 export default function Header() {
@@ -104,7 +103,7 @@ export default function Header() {
 
       {/* 移动端底部导航 */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/40 bg-background/95 backdrop-blur-md md:hidden">
-        <div className="grid grid-cols-4">
+        <div className="grid grid-cols-3">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             return (

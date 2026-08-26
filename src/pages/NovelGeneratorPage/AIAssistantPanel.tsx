@@ -160,7 +160,6 @@ export default function AIAssistantPanel({
       return;
     }
     startGeneration();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChapter, skeleton, chapterGenerating]);
 
   const startGeneration = useCallback(async () => {
