@@ -1,4 +1,4 @@
-// EXPORTS: ICategory, ICategoryResearchData, IOutlineCard, ICharacter, IWorldSetting, IPlotNode, IStructure, IChapterMeta, IChapter, IStorySkeleton, ICreationState
+// EXPORTS: ICategory, ICategoryResearchData, IOutlineCard, ICharacter, IWorldSetting, IPlotNode, IStructure, IChapterMeta, IChapter, IStorySkeleton, ICreationState, INITIAL_CREATION_STATE
 // 小说创作全流程辅助平台 - 类型定义与初始状态
 
 // 品类调研单项
@@ -108,7 +108,9 @@ export interface IStorySkeleton {
 
 // 全局创作状态
 export interface ICreationState {
+  categoryResearchData: ICategoryResearchData | null;
   selectedCategory: ICategory | null;
+  outlineList: IOutlineCard[];
   selectedOutline: IOutlineCard | null;
   storySkeleton: IStorySkeleton | null;
   chapters: IChapter[];
@@ -116,7 +118,9 @@ export interface ICreationState {
 }
 
 export const INITIAL_CREATION_STATE: ICreationState = {
+  categoryResearchData: null,
   selectedCategory: null,
+  outlineList: [],
   selectedOutline: null,
   storySkeleton: null,
   chapters: [],

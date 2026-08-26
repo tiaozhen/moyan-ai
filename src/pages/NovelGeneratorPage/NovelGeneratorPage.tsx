@@ -7,7 +7,6 @@ import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
 import type { IChapter, IStorySkeleton } from '@/data/novel';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
-import { INITIAL_CREATION_STATE } from '@/data/novel';
 import ChapterList from './ChapterList';
 import EditorToolbar from './EditorToolbar';
 import AIAssistantPanel from './AIAssistantPanel';
@@ -29,7 +28,7 @@ export default function NovelGeneratorPage() {
 
   // 加载状态
   useEffect(() => {
-    const state = loadCreationState(INITIAL_CREATION_STATE);
+    const state = loadCreationState();
     if (state.chapters && state.chapters.length > 0) {
       setChapters(state.chapters);
       setCurrentChapterId(state.currentChapterId || state.chapters[0].id);
@@ -50,18 +49,26 @@ export default function NovelGeneratorPage() {
     }
   }, [currentChapterId, currentChapter?.id]);
 
-  // 自动保存
+  // 自动保存：更新内存 state + 写入本地存储
   const autoSave = useCallback(() => {
     if (!currentChapterId || !editorRef.current) return;
     const content = editorRef.current.innerHTML;
 
-    setChapters((prev) =>
-      prev.map((c) =>
+    setChapters((prev) => {
+      const updated = prev.map((c) =>
         c.id === currentChapterId
-          ? { ...c, content, status: c.status === 'unwritten' ? 'generated' : 'edited', lastModified: Date.now() }
+          ? { ...c, content, status: (c.status === 'unwritten' ? 'generated' : 'edited') as IChapter['status'], lastModified: Date.now() }
           : c
-      )
-    );
+      );
+      // 同步写入本地存储
+      const state = loadCreationState();
+      saveCreationState({
+        ...state,
+        chapters: updated,
+        currentChapterId,
+      });
+      return updated;
+    });
   }, [currentChapterId]);
 
   const handleInput = useCallback(() => {
@@ -77,19 +84,12 @@ export default function NovelGeneratorPage() {
   const handleSave = useCallback(() => {
     setSaving(true);
     autoSave();
-    // 持久化到 storage
+    // autoSave 内部已写 storage，这里只做 UI 反馈
     setTimeout(() => {
-      const state = loadCreationState(INITIAL_CREATION_STATE);
-      const newState = {
-        ...state,
-        chapters,
-        currentChapterId,
-      };
-      saveCreationState(newState);
       toast.success('已保存');
       setSaving(false);
     }, 300);
-  }, [autoSave, chapters, currentChapterId]);
+  }, [autoSave]);
 
   // 选区变化 - 显示悬浮工具栏
   const handleSelectionChange = useCallback(() => {
@@ -136,14 +136,19 @@ export default function NovelGeneratorPage() {
 
   // 选章节
   const handleSelectChapter = useCallback((id: string) => {
-    // 先保存当前章节
+    // 先保存当前章节内容到 storage
     if (currentChapterId && editorRef.current) {
       const content = editorRef.current.innerHTML;
-      setChapters((prev) =>
-        prev.map((c) =>
-          c.id === currentChapterId ? { ...c, content, lastModified: Date.now() } : c
-        )
+      const state = loadCreationState();
+      const updatedChapters: IChapter[] = state.chapters.map((c) =>
+        c.id === currentChapterId ? { ...c, content, lastModified: Date.now() } : c
       );
+      saveCreationState({
+        ...state,
+        chapters: updatedChapters,
+        currentChapterId: id,
+      });
+      setChapters(updatedChapters);
     }
     setCurrentChapterId(id);
     setGhostText('');

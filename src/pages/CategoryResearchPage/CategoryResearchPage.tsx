@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, TrendingUp, Users, Zap, BarChart3, Loader2, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -14,7 +14,6 @@ import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import type { ICategory, ICategoryResearchData } from '@/data/novel';
 import { CHART_COLORS, CHART_PRIMARY, CHART_SECONDARY } from '@/lib/chart-colors';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
-import { INITIAL_CREATION_STATE } from '@/data/novel';
 
 const CATEGORY_DIRECTIONS = ['玄幻', '都市', '言情', '科幻', '悬疑', '历史'];
 
@@ -23,6 +22,14 @@ export default function CategoryResearchPage() {
   const [data, setData] = useState<ICategoryResearchData | null>(null);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
+
+  // 页面加载时从本地存储恢复数据
+  useEffect(() => {
+    const state = loadCreationState();
+    if (state.categoryResearchData) {
+      setData(state.categoryResearchData);
+    }
+  }, []);
 
   const generateResearch = useCallback(async () => {
     setLoading(true);
@@ -53,6 +60,9 @@ export default function CategoryResearchPage() {
         generatedAt: Date.now(),
       };
       setData(researchData);
+      // 持久化到本地存储
+      const state = loadCreationState();
+      saveCreationState({ ...state, categoryResearchData: researchData });
       toast.success(`已生成 ${categories.length} 个品类的调研数据`);
     } catch (err) {
       logger.error('品类调研生成失败:', String(err));
@@ -64,9 +74,8 @@ export default function CategoryResearchPage() {
 
   const handleSelectCategory = useCallback(
     (category: ICategory) => {
-      const state = loadCreationState(INITIAL_CREATION_STATE);
-      const newState = { ...state, selectedCategory: category };
-      saveCreationState(newState);
+      const state = loadCreationState();
+      saveCreationState({ ...state, selectedCategory: category });
       toast.success(`已选择「${category.name}」品类`);
       navigate('/outline');
     },

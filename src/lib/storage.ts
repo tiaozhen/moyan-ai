@@ -1,16 +1,17 @@
 import { scopedStorage } from '@lark-apaas/client-toolkit-lite';
-import type { ICreationState, INITIAL_CREATION_STATE } from '@/data/novel';
+import type { ICreationState } from '@/data/novel';
+import { INITIAL_CREATION_STATE } from '@/data/novel';
 
 const STATE_KEY = 'novel_creation_state';
 
-export function loadCreationState(initial: typeof INITIAL_CREATION_STATE): typeof INITIAL_CREATION_STATE {
+export function loadCreationState(): ICreationState {
   try {
     const raw = scopedStorage.getItem(STATE_KEY);
-    if (!raw) return initial;
-    const parsed = JSON.parse(raw);
-    return { ...initial, ...parsed };
+    if (!raw) return { ...INITIAL_CREATION_STATE };
+    const parsed = JSON.parse(raw) as Partial<ICreationState>;
+    return { ...INITIAL_CREATION_STATE, ...parsed };
   } catch {
-    return initial;
+    return { ...INITIAL_CREATION_STATE };
   }
 }
 

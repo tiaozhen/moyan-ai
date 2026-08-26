@@ -25,7 +25,6 @@ import { toast } from 'sonner';
 import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import type { IOutlineCard, IStorySkeleton, IChapter } from '@/data/novel';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
-import { INITIAL_CREATION_STATE } from '@/data/novel';
 
 const SECTIONS = [
   { id: 'characters', label: '人物设定', icon: Users },
@@ -44,7 +43,7 @@ export default function OutlineExpansionPage() {
   const [editingField, setEditingField] = useState<string | null>(null);
 
   useEffect(() => {
-    const state = loadCreationState(INITIAL_CREATION_STATE);
+    const state = loadCreationState();
     if (state.selectedOutline) {
       setOutline(state.selectedOutline);
     }
@@ -73,6 +72,9 @@ export default function OutlineExpansionPage() {
 
       const mapped: IStorySkeleton = mapApiToSkeleton(result);
       setSkeleton(mapped);
+      // 持久化骨架
+      const state = loadCreationState();
+      saveCreationState({ ...state, storySkeleton: mapped });
       toast.success('故事骨架生成完成');
     } catch (err) {
       logger.error('故事骨架生成失败:', String(err));
@@ -84,22 +86,27 @@ export default function OutlineExpansionPage() {
 
   const handleConfirm = useCallback(() => {
     if (!skeleton) return;
-    const state = loadCreationState(INITIAL_CREATION_STATE);
+    const state = loadCreationState();
 
-    // 将章节规划转为章节数据
-    const chapters: IChapter[] = skeleton.chapterPlan.map((meta) => ({
-      ...meta,
-      id: meta.id,
-      content: '',
-      status: 'unwritten' as const,
-      lastModified: Date.now(),
-    }));
+    // 只有章节列表为空时才从骨架初始化，避免覆盖已有的正文内容
+    let chapters: IChapter[];
+    if (state.chapters && state.chapters.length > 0) {
+      chapters = state.chapters;
+    } else {
+      chapters = skeleton.chapterPlan.map((meta) => ({
+        ...meta,
+        id: meta.id,
+        content: '',
+        status: 'unwritten' as const,
+        lastModified: Date.now(),
+      }));
+    }
 
     const newState = {
       ...state,
       storySkeleton: skeleton,
       chapters,
-      currentChapterId: chapters[0]?.id || null,
+      currentChapterId: state.currentChapterId || chapters[0]?.id || null,
     };
     saveCreationState(newState);
     toast.success('骨架已确认，开始创作吧！');
@@ -109,7 +116,11 @@ export default function OutlineExpansionPage() {
   const updateSkeleton = useCallback((updater: (prev: IStorySkeleton) => IStorySkeleton) => {
     setSkeleton((prev) => {
       if (!prev) return prev;
-      return updater(prev);
+      const next = updater(prev);
+      // 防抖持久化：编辑完成后写入 storage
+      const state = loadCreationState();
+      saveCreationState({ ...state, storySkeleton: next });
+      return next;
     });
   }, []);
 

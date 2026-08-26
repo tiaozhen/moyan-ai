@@ -9,7 +9,6 @@ import { toast } from 'sonner';
 import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import type { ICategory, IOutlineCard } from '@/data/novel';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
-import { INITIAL_CREATION_STATE } from '@/data/novel';
 
 export default function OutlinePage() {
   const navigate = useNavigate();
@@ -19,9 +18,12 @@ export default function OutlinePage() {
   const [rawText, setRawText] = useState('');
 
   useEffect(() => {
-    const state = loadCreationState(INITIAL_CREATION_STATE);
+    const state = loadCreationState();
     if (state.selectedCategory) {
       setCategory(state.selectedCategory);
+    }
+    if (state.outlineList && state.outlineList.length > 0) {
+      setOutlines(state.outlineList);
     }
   }, []);
 
@@ -60,6 +62,9 @@ export default function OutlinePage() {
         return;
       }
       setOutlines(parsed);
+      // 持久化大纲列表
+      const state = loadCreationState();
+      saveCreationState({ ...state, outlineList: parsed });
       toast.success(`已生成 ${parsed.length} 个故事大纲`);
     } catch (err) {
       logger.error('一句话大纲生成失败:', String(err));
@@ -71,9 +76,8 @@ export default function OutlinePage() {
 
   const handleSelectOutline = useCallback(
     (outline: IOutlineCard) => {
-      const state = loadCreationState(INITIAL_CREATION_STATE);
-      const newState = { ...state, selectedOutline: outline };
-      saveCreationState(newState);
+      const state = loadCreationState();
+      saveCreationState({ ...state, selectedOutline: outline });
       toast.success(`已选择「${outline.title}」`);
       navigate('/expansion');
     },
