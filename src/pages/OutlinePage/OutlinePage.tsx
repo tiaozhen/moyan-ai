@@ -92,7 +92,7 @@ export default function OutlinePage() {
     const result = await startOutlineBatch(
       category.name,
       '8个',
-      '每个大纲要有独特的切入点，避免俗套，包含强悬念和反转元素',
+      '每个条目必须包含【小说名称】和【一句话大纲】两部分，格式为：\n1. 《小说名称》——一句话大纲（30-50字，包含主角、核心冲突、独特设定/钩子）\n小说名称要有吸引力、符合品类风格，不能是普通描述性标题；一句话大纲要简洁有力，包含强悬念和反转元素，每个大纲要有独特的切入点，避免俗套',
       parseOutlines
     );
     if (result) {
@@ -230,16 +230,23 @@ export default function OutlinePage() {
                 whileHover={{ y: -6, transition: { duration: 0.2 } }}
               >
                 <Card className="flex h-full flex-col hover:shadow-md">
-                  <CardHeader>
-                    <div className="flex items-center gap-2">
-                      <div className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start gap-3">
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary">
                         {i + 1}
                       </div>
-                      <CardTitle className="text-base">{outline.title}</CardTitle>
+                      <div className="min-w-0 flex-1">
+                        <CardTitle className="text-xl font-bold tracking-tight leading-snug">
+                          「{outline.title}」
+                        </CardTitle>
+                      </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="flex-1">
-                    <p className="text-sm leading-relaxed text-foreground">
+                  <CardContent className="flex-1 pb-4">
+                    <div className="mb-2 text-xs font-medium text-primary/70 uppercase tracking-wide">
+                      一句话大纲
+                    </div>
+                    <p className="text-sm leading-relaxed text-foreground/90">
                       {outline.concept}
                     </p>
                   </CardContent>
@@ -356,32 +363,49 @@ function parseOutlines(text: string): IOutlineCard[] {
   let currentConcept = '';
 
   for (const line of lines) {
-    // 匹配 "数字. 标题：内容" 或 "数字. 标题-内容" 或 "数字、内容"
-    const match = line.match(/^(\d+)[\.、]\s*(.+)/);
-    if (match) {
-      const content = match[2].trim();
+    // 匹配编号开头： "1. ..." 或 "1、..."
+    const match = line.match(/^\d+[\.、]\s*(.+)/);
+    if (!match) continue;
+    const content = match[1].trim();
 
-      // 尝试从内容中提取标题（冒号、破折号分隔的前半部分）
-      const titleMatch = content.match(/^(.+?)[：:——\-]\s*(.+)$/);
-      if (titleMatch) {
-        currentTitle = titleMatch[1].trim();
-        currentConcept = titleMatch[2].trim();
+    let title = '';
+    let concept = '';
+
+    // 优先匹配《书名号》格式：《小说名称》——/：/-/一句话...
+    const bookMatch = content.match(/^[《〈]([^》〉]+)[》〉]\s*[——\-：:]*\s*(.+)$/);
+    if (bookMatch) {
+      title = bookMatch[1].trim();
+      concept = bookMatch[2].trim();
+    } else {
+      // 尝试匹配 "名称：内容" 或 "名称——内容" 或 "名称-内容" 格式
+      const sepMatch = content.match(/^(.+?)\s*[：:——\-]\s*(.+)$/);
+      if (sepMatch) {
+        title = sepMatch[1].trim().replace(/^[《〈]|[》〉]$/g, '');
+        concept = sepMatch[2].trim();
       } else {
-        // 没有明确标题，用前几个字作为标题
-        currentTitle = content.slice(0, Math.min(10, content.length)) + '...';
-        currentConcept = content;
+        // 没有明确分隔，前半句做标题，整句做概念
+        title = content.length > 12 ? content.slice(0, 12) + '…' : content;
+        concept = content;
       }
-
-      // 生成标签（从概念中提取关键词）
-      const tags = extractTags(currentConcept);
-
-      outlines.push({
-        id: `outline-${outlines.length + 1}`,
-        title: currentTitle,
-        concept: currentConcept,
-        tags,
-      });
     }
+
+    // 去掉标题前后可能残留的引号、书名号
+    title = title.replace(/^[""''《〈]|[""''》〉]$/g, '').trim();
+
+    if (!title || !concept) continue;
+
+    currentTitle = title;
+    currentConcept = concept;
+
+    // 生成标签
+    const tags = extractTags(currentConcept + currentTitle);
+
+    outlines.push({
+      id: `outline-${outlines.length + 1}`,
+      title: currentTitle,
+      concept: currentConcept,
+      tags,
+    });
   }
 
   return outlines;
