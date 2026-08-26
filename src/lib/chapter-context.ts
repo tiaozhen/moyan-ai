@@ -49,7 +49,7 @@ export function buildChapterGenerationInput(
     if (nsParts.length) outlineParts.push(`【整体剧情结构】\n${nsParts.join('\n')}`);
   }
 
-  // 章节规划（本章 + 前后各 1 章，让 AI 知道前后衔接）
+  // 章节规划（本章完整规划 + 前后各 1 章，让 AI 知道前后衔接）
   if (allChapters.length > 0) {
     const planLines: string[] = [];
     const planStart = Math.max(0, idx - 1);
@@ -58,8 +58,28 @@ export function buildChapterGenerationInput(
       const ch = allChapters[i];
       const marker = i === idx ? ' ← 当前章' : '';
       planLines.push(
-        `第${ch.chapterNumber}章 ${ch.chapterTitle}${marker}：${ch.chapterSummary || '暂无概要'}`
+        `第${ch.chapterNumber}章 ${ch.chapterTitle}${marker}`
       );
+      if (i === idx) {
+        // 当前章：完整详细规划
+        if (ch.coreEvent) planLines.push(`  核心事件：${ch.coreEvent}`);
+        if (ch.characters) planLines.push(`  出场人物：${ch.characters}`);
+        if (ch.sceneLocation) planLines.push(`  场景地点：${ch.sceneLocation}`);
+        if (ch.moodTone) planLines.push(`  情绪基调：${ch.moodTone}`);
+        if (ch.chapterStart) planLines.push(`  本章起点：${ch.chapterStart}`);
+        if (ch.chapterEnd) planLines.push(`  本章终点：${ch.chapterEnd}`);
+        if (ch.foreshadowing) planLines.push(`  伏笔悬念：${ch.foreshadowing}`);
+        if ((ch as any).phase) planLines.push(`  剧情阶段：${(ch as any).phase}`);
+      } else {
+        // 前后章：重点传终点/起点
+        if (i < idx && ch.chapterEnd) {
+          planLines.push(`  上章终点（悬念/过渡）：${ch.chapterEnd}`);
+        }
+        if (i > idx && ch.chapterStart) {
+          planLines.push(`  下章起点：${ch.chapterStart}`);
+        }
+        if (ch.chapterSummary) planLines.push(`  概要：${ch.chapterSummary}`);
+      }
     }
     if (planLines.length) outlineParts.push(`【章节规划（前后衔接）】\n${planLines.join('\n')}`);
   }
@@ -116,11 +136,18 @@ export function buildChapterGenerationInput(
   const reqParts = [
     `请生成《第${chapter.chapterNumber}章 ${chapter.chapterTitle}》的完整正文内容。`,
     chapter.chapterSummary ? `本章概要：${chapter.chapterSummary}` : '',
-    chapter.coreEvent ? `本章核心事件：${chapter.coreEvent}` : '',
+    (chapter as any).coreEvent ? `本章核心事件：${(chapter as any).coreEvent}` : '',
+    (chapter as any).characters ? `出场人物设定：${(chapter as any).characters}` : '',
+    (chapter as any).moodTone ? `情绪基调：${(chapter as any).moodTone}` : '',
+    (chapter as any).sceneLocation ? `主要场景：${(chapter as any).sceneLocation}` : '',
+    (chapter as any).chapterStart ? `本章切入点（承接上一章）：${(chapter as any).chapterStart}` : '',
+    (chapter as any).chapterEnd ? `本章结尾落点：${(chapter as any).chapterEnd}` : '',
+    (chapter as any).foreshadowing ? `伏笔/悬念处理：${(chapter as any).foreshadowing}` : '',
     '字数控制在2000-3000字之间，分多个自然段落，对话和描写比例合理。',
     prevChapters.length > 0
-      ? '严格承接前面章节的剧情、人物关系和世界观设定，保持人物性格一致、情节连贯。'
+      ? '严格承接前面章节的剧情、人物关系和世界观设定，保持人物性格一致、情节连贯。开头要自然承接上一章结尾的状态和悬念，人物行动要符合前文铺垫，不能出现突兀跳跃或前后矛盾。'
       : '作为开篇章节，要做好人物登场、世界观铺垫和悬念设置，吸引读者继续阅读。',
+    '请严格遵循上述章节规划，不要偏离核心事件、出场人物和情绪基调。',
     '只输出正文内容，不要章节标题，不要任何解释或说明。',
     extraRequirement.trim() ? `额外要求：${extraRequirement.trim()}` : '',
   ].filter(Boolean);

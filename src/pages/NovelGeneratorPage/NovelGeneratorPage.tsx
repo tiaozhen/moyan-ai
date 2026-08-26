@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Save, Loader2, Sparkles, FileText, AlertCircle } from 'lucide-react';
+import { ArrowLeft, BookOpen, Save, Loader2, Sparkles, FileText, AlertCircle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -321,7 +321,45 @@ export default function NovelGeneratorPage() {
     return idx >= 0 && idx < chapters.length - 1;
   }, [currentChapterId, chapters]);
 
-  // AI 替换选中文本（润色）
+  // 章节连贯性校验：比较本章规划起点与上一章实际结尾的相似度
+  const continuityWarning = useMemo(() => {
+    if (!currentChapter || !skeleton?.chapterPlan?.length) return null;
+    const idx = chapters.findIndex((c) => c.id === currentChapter.id);
+    if (idx <= 0) return null; // 第一章无前文
+
+    const prevChapter = chapters[idx - 1];
+    const prevContent = (prevChapter.content || '').replace(/<[^>]+>/g, '').trim();
+    if (!prevContent || prevContent.length < 50) return null; // 上章内容太少不校验
+
+    const planStart = (currentChapter as any).chapterStart || '';
+    if (!planStart) return null; // 无规划起点
+
+    // 提取上一章最后约200字作为结尾
+    const prevEnding = prevContent.slice(-200);
+
+    // 简单关键词重叠校验：提取规划起点中的关键词（2字以上实词），看上章结尾是否出现
+    const keywords = planStart
+      .replace(/[，。、；：！？\s「」《》（）【】"'\.\,\!\?]/g, ' ')
+      .split(/\s+/)
+      .filter((w: string) => w.length >= 2 && w.length <= 6);
+
+    if (keywords.length === 0) return null;
+
+    let matchCount = 0;
+    for (const kw of keywords) {
+      if (prevEnding.includes(kw)) matchCount++;
+    }
+
+    const matchRate = matchCount / keywords.length;
+    if (matchRate < 0.2 && keywords.length >= 3) {
+      return {
+        level: 'warn' as const,
+        message: `本章规划的起点与上一章实际结尾内容衔接度较低，建议检查衔接是否自然，或在生成时添加衔接说明。`,
+        planStart,
+      };
+    }
+    return null;
+  }, [currentChapter, chapters, skeleton]);
   const handleReplaceSelection = useCallback(
     (text: string) => {
       if (!editorRef.current) return;
@@ -466,9 +504,20 @@ export default function NovelGeneratorPage() {
                 <h1 className="mb-2 text-3xl font-bold text-foreground">
                   {currentChapter.chapterTitle}
                 </h1>
-                <p className="mb-8 text-sm text-muted-foreground">
+                <p className="mb-4 text-sm text-muted-foreground">
                   {currentChapter.chapterSummary}
                 </p>
+
+                {/* 连贯性校验提示 */}
+                {continuityWarning && (
+                  <div className="mb-6 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">衔接提醒</div>
+                      <div className="mt-0.5 text-xs opacity-90">{continuityWarning.message}</div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 编辑器容器 */}
                 <div className="relative">

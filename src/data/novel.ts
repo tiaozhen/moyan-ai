@@ -1,4 +1,5 @@
-// EXPORTS: ICategory, ICategoryResearchData, IOutlineCard, ICharacter, IWorldSetting, IPlotNode, IStructure, IChapterMeta, IChapter, IStorySkeleton, INovelArticle, NovelLengthType, ICreationState, INITIAL_CREATION_STATE
+// 章节元信息
+// EXPORTS: ICategory, ICategoryResearchData, IOutlineCard, ICharacter, IWorldSetting, IPlotNode, IStructure, IChapterMeta, IChapter, IStorySkeleton, INovelArticle, NovelLengthType, ChapterPhase, ICreationState, INITIAL_CREATION_STATE
 // 小说创作全流程辅助平台 - 类型定义与初始状态
 
 // 品类调研单项
@@ -81,13 +82,23 @@ export interface IStructure {
   ending: string;
 }
 
+// 章节起承转合阶段
+export type ChapterPhase = '铺垫' | '发展' | '高潮' | '收尾';
+
 // 章节元信息
 export interface IChapterMeta {
   id: string;
   chapterNumber: string;
   chapterTitle: string;
   chapterSummary: string;
-  coreEvent: string;
+  coreEvent: string;        // 本章核心事件（2-3句话）
+  characters: string;       // 出场人物及目的冲突
+  sceneLocation: string;    // 场景地点
+  moodTone: string;         // 情绪基调（紧张/温馨/悬疑/高潮等）
+  chapterStart: string;     // 本章起点：承接上一章的切入点
+  chapterEnd: string;       // 本章终点：结尾节点与悬念/过渡
+  foreshadowing: string;    // 关键伏笔/悬念
+  phase: ChapterPhase;      // 所属起承转合阶段
 }
 
 // 章节完整数据（含正文）

@@ -169,7 +169,21 @@ export default function AIAssistantPanel({
       .slice(0, 3)
       .map((c) => `${c.name}（${c.identity}）`)
       .join('、');
-    return `故事背景：${skeleton.worldView.background}\n主要人物：${mainChars}\n当前章节：${currentChapter?.chapterTitle || ''}\n章节概要：${currentChapter?.chapterSummary || ''}`;
+    const ch = currentChapter as any;
+    const chapterDetailParts: string[] = [];
+    if (ch?.coreEvent) chapterDetailParts.push(`核心事件：${ch.coreEvent}`);
+    if (ch?.characters) chapterDetailParts.push(`出场人物：${ch.characters}`);
+    if (ch?.sceneLocation) chapterDetailParts.push(`场景地点：${ch.sceneLocation}`);
+    if (ch?.moodTone) chapterDetailParts.push(`情绪基调：${ch.moodTone}`);
+    if (ch?.chapterEnd) chapterDetailParts.push(`本章应写到：${ch.chapterEnd}`);
+    if (ch?.foreshadowing) chapterDetailParts.push(`伏笔处理：${ch.foreshadowing}`);
+    return [
+      `故事背景：${skeleton.worldView.background}`,
+      `主要人物：${mainChars}`,
+      `当前章节：第${ch?.chapterNumber || ''}章 ${ch?.chapterTitle || ''}`,
+      `章节概要：${ch?.chapterSummary || ''}`,
+      ...chapterDetailParts,
+    ].filter(Boolean).join('\n');
   }, [skeleton, currentChapter]);
 
   const handleAction = useCallback(

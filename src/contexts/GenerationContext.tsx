@@ -12,7 +12,8 @@ import {
 import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import { toast } from 'sonner';
 import { loadCreationState, saveCreationState, updateCurrentArticle, setArticleSkeleton } from '@/lib/storage';
-import type { ICategory, ICategoryResearchData, IOutlineCard, IStorySkeleton, IChapter, ICreationState } from '@/data/novel';
+import type { ICategory, ICategoryResearchData, IOutlineCard, IStorySkeleton, IChapter, ICreationState, NovelLengthType } from '@/data/novel';
+import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
 
 export type GenerationTaskType =
   | 'category_research'
@@ -42,7 +43,11 @@ interface GenerationContextValue {
   startOutlineBatch: (category: string, count: string, additional: string, parser: (text: string) => IOutlineCard[]) => Promise<IOutlineCard[] | null>;
   getOutlineStreamingText: () => string;
   // 故事骨架（单次 text-to-json）
-  startStorySkeleton: (outline: string, mapper: (raw: any) => IStorySkeleton) => Promise<IStorySkeleton | null>;
+  startStorySkeleton: (
+    outline: string,
+    lengthType: NovelLengthType,
+    mapper: (raw: any) => IStorySkeleton
+  ) => Promise<IStorySkeleton | null>;
   // 小说正文流式生成（续写/扩写/润色），返回流式文本的实时读取接口
   startNovelGeneration: (
     taskType: 'novel_continue' | 'novel_polish' | 'novel_expand',
@@ -274,9 +279,13 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
 
   const getOutlineStreamingText = useCallback(() => outlineStreamingRef.current, []);
 
-  // ========== 故事骨架 ==========
+  // ========== 故事骨架生成（含详细章节规划） ==========
   const startStorySkeleton = useCallback(
-    async (outline: string, mapper: (raw: any) => IStorySkeleton): Promise<IStorySkeleton | null> => {
+    async (
+      outline: string,
+      lengthType: NovelLengthType,
+      mapper: (raw: any) => IStorySkeleton
+    ): Promise<IStorySkeleton | null> => {
       const type: GenerationTaskType = 'story_skeleton';
       const ok = startTask(type);
       if (!ok) return null;
@@ -284,9 +293,35 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
       setTaskProgress(type, '正在生成故事骨架...');
 
       try {
+        const lengthInfo = NOVEL_LENGTH_OPTIONS[lengthType];
+        const prompt = `请基于以下一句话故事大纲，生成一份完整的小说故事骨架。
+
+【一句话大纲】
+${outline}
+
+【篇幅要求】
+篇幅类型：${lengthInfo.label}（${lengthInfo.wordRange}，${lengthInfo.chapterRange}）
+请生成约 ${lengthInfo.suggestedChapters} 个章节的详细规划。
+
+【章节规划详细要求】
+每个章节必须包含以下字段，内容要充实具体，不能只有一两句话：
+- chapter_number：章节序号
+- chapter_title：章节标题
+- chapter_summary：本章概要（完整段落，描述本章主要剧情走向）
+- core_event：核心事件（2-3句话，明确本章最关键的情节）
+- characters：出场人物（列出本章主要角色，以及他们在本章中的目的、行动和冲突）
+- scene_location：场景地点（本章主要发生的场景和环境）
+- mood_tone：情绪基调（本章整体氛围，如紧张、温馨、悬疑、高潮、悲伤、轻松等）
+- chapter_start：本章起点（承接上一章的什么内容，本章开头从哪里切入）
+- chapter_end：本章终点（本章结尾停在什么节点，留下什么悬念或如何过渡到下一章）
+- foreshadowing：关键伏笔或悬念（本章埋下什么伏笔，或回收什么伏笔）
+- phase：所属阶段（从"铺垫、发展、高潮、收尾"中选择一个，体现整体起承转合节奏）
+
+请严格按照上述字段输出，确保章节之间有清晰的起承转合节奏，前因后果连贯。`;
+
         const result = (await capabilityClient
           .load('story_outline_generator_1')
-          .call('textToJson', { story_outline: outline })) as any;
+          .call('textToJson', { story_outline: prompt })) as any;
 
         if (!result || !result.character_settings) {
           markTaskDone(type, '数据不完整');

@@ -12,6 +12,15 @@ import {
   Check,
   Edit3,
   FileText,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
+  MapPin,
+  Heart,
+  Compass,
+  Target,
+  Lightbulb,
+  TrendingUp,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -21,8 +30,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { toast } from 'sonner';
-import type { IOutlineCard, IStorySkeleton, IChapter, INovelArticle } from '@/data/novel';
+import type { IOutlineCard, IStorySkeleton, IChapter, IChapterMeta, INovelArticle, ChapterPhase } from '@/data/novel';
 import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
 import {
   loadCreationState,
@@ -102,47 +113,20 @@ export default function OutlineExpansionPage() {
       return;
     }
 
-    const result = await startStorySkeleton(currentArticle.outline.concept, mapApiToSkeleton);
+    const result = await startStorySkeleton(currentArticle.outline.concept, currentArticle.lengthType, mapApiToSkeleton);
     if (result) {
-      // 篇幅影响章节规划数量
-      const targetChapters = NOVEL_LENGTH_OPTIONS[currentArticle.lengthType].suggestedChapters;
-      let chapterPlan = result.chapterPlan;
-      if (chapterPlan.length < targetChapters && chapterPlan.length > 0) {
-        // 按比例扩展中间章节概要，简单复制并递增编号
-        const base = chapterPlan;
-        const expanded = [...base];
-        while (expanded.length < targetChapters) {
-          const midIdx = Math.floor(base.length / 2);
-          const template = base[midIdx];
-          const newIdx = expanded.length + 1;
-          expanded.splice(midIdx, 0, {
-            ...template,
-            id: `ch-auto-${Date.now()}-${newIdx}`,
-            chapterNumber: String(newIdx),
-            chapterTitle: `第${newIdx}章 剧情发展`,
-            chapterSummary: `剧情进一步发展，承上启下。（自动扩展章节，建议人工调整）`,
-            coreEvent: template.coreEvent,
-          });
-        }
-        chapterPlan = expanded.map((ch, i) => ({
-          ...ch,
-          chapterNumber: String(i + 1),
-        }));
-      }
-      const adjustedResult = { ...result, chapterPlan };
-
       // 写入当前文章
       const state = loadCreationState();
-      const chapters: IChapter[] = adjustedResult.chapterPlan.map((meta) => ({
+      const chapters: IChapter[] = result.chapterPlan.map((meta) => ({
         ...meta,
         id: meta.id,
         content: '',
         status: 'unwritten' as const,
         lastModified: Date.now(),
       }));
-      const newState = setArticleSkeleton(state, adjustedResult, chapters);
+      const newState = setArticleSkeleton(state, result, chapters);
       saveCreationState(newState);
-      setSkeleton(adjustedResult);
+      setSkeleton(result);
       setArticles(newState.articles);
     }
   }, [currentArticle, navigate, startStorySkeleton]);
@@ -609,62 +593,50 @@ export default function OutlineExpansionPage() {
               <SectionHeader
                 icon={<BookOpen className="size-5" />}
                 title="章节规划"
-                subtitle="全书的章节划分与概要"
+                subtitle={`全书共 ${skeleton.chapterPlan.length} 章，点击卡片展开查看详细设定${editingField === 'chapters' ? '（编辑模式）' : ''}`}
                 onEdit={() => setEditingField('chapters')}
                 isEditing={editingField === 'chapters'}
               />
-              <Card>
-                <CardContent className="p-0">
-                  <div className="divide-y">
-                    {skeleton.chapterPlan.map((ch, idx) => (
-                      <div key={ch.id} className="flex gap-4 p-4">
-                        <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
-                          {ch.chapterNumber || idx + 1}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2">
-                            <EditableField
-                              label="章节标题"
-                              value={ch.chapterTitle}
-                              fieldKey={`ch-title-${ch.id}`}
-                              editingField={editingField}
-                              isTitle
-                              onSave={(v) =>
-                                updateSkeleton((prev) => ({
-                                  ...prev,
-                                  chapterPlan: prev.chapterPlan.map((c) =>
-                                    c.id === ch.id ? { ...c, chapterTitle: v } : c
-                                  ),
-                                }))
-                              }
-                            />
-                          </div>
-                          <EditableField
-                            label="章节概要"
-                            value={ch.chapterSummary}
-                            fieldKey={`ch-summary-${ch.id}`}
-                            editingField={editingField}
-                            onSave={(v) =>
-                              updateSkeleton((prev) => ({
-                                ...prev,
-                                chapterPlan: prev.chapterPlan.map((c) =>
-                                  c.id === ch.id ? { ...c, chapterSummary: v } : c
-                                ),
-                              }))
-                            }
-                          />
-                          {ch.coreEvent && (
-                            <div className="mt-2 text-xs text-muted-foreground">
-                              <span className="font-medium">核心事件：</span>
-                              {ch.coreEvent}
-                            </div>
-                          )}
-                        </div>
+
+              {/* 起承转合节奏总览 */}
+              <div className="mb-6 grid grid-cols-4 gap-2 md:gap-3">
+                {[
+                  { phase: '铺垫', color: 'bg-blue-500', label: '起·铺垫' },
+                  { phase: '发展', color: 'bg-green-500', label: '承·发展' },
+                  { phase: '高潮', color: 'bg-orange-500', label: '转·高潮' },
+                  { phase: '收尾', color: 'bg-purple-500', label: '合·收尾' },
+                ].map((p) => {
+                  const count = skeleton.chapterPlan.filter((c) => c.phase === p.phase).length;
+                  return (
+                    <div key={p.phase} className="rounded-lg border border-border/50 bg-card p-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`size-2 rounded-full ${p.color}`} />
+                        <span className="text-xs font-medium text-muted-foreground">{p.label}</span>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+                      <div className="mt-1 text-xl font-bold text-foreground">{count}<span className="ml-1 text-xs font-normal text-muted-foreground">章</span></div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <Accordion type="single" collapsible className="w-full space-y-2">
+                {skeleton.chapterPlan.map((ch, idx) => (
+                  <ChapterPlanCard
+                    key={ch.id}
+                    chapter={ch}
+                    index={idx}
+                    isEditing={editingField === 'chapters'}
+                    onUpdate={(updates) =>
+                      updateSkeleton((prev) => ({
+                        ...prev,
+                        chapterPlan: prev.chapterPlan.map((c) =>
+                          c.id === ch.id ? { ...c, ...updates } : c
+                        ),
+                      }))
+                    }
+                  />
+                ))}
+              </Accordion>
             </section>
 
             {/* 底部确认按钮 */}
@@ -869,6 +841,13 @@ function mapApiToSkeleton(api: any): IStorySkeleton {
       chapterTitle: c.chapter_title || `第${i + 1}章`,
       chapterSummary: c.chapter_summary || '',
       coreEvent: c.core_event || '',
+      characters: c.characters || '',
+      sceneLocation: c.scene_location || '',
+      moodTone: c.mood_tone || '',
+      chapterStart: c.chapter_start || '',
+      chapterEnd: c.chapter_end || '',
+      foreshadowing: c.foreshadowing || '',
+      phase: (c.phase as ChapterPhase) || '发展',
     })) || [];
 
   return {
@@ -878,4 +857,119 @@ function mapApiToSkeleton(api: any): IStorySkeleton {
     narrativeStructure,
     chapterPlan,
   };
+}
+
+const PHASE_COLORS: Record<ChapterPhase, string> = {
+  铺垫: 'bg-blue-500',
+  发展: 'bg-green-500',
+  高潮: 'bg-orange-500',
+  收尾: 'bg-purple-500',
+};
+
+interface ChapterPlanCardProps {
+  chapter: IChapterMeta & { phase: ChapterPhase };
+  index: number;
+  isEditing: boolean;
+  onUpdate: (updates: Partial<IChapterMeta & { phase: ChapterPhase }>) => void;
+}
+
+function ChapterPlanCard({ chapter, index, isEditing, onUpdate }: ChapterPlanCardProps) {
+  const phaseColor = PHASE_COLORS[chapter.phase] || 'bg-muted-foreground';
+
+  const FieldRow = ({ icon: Icon, label, value, fieldKey, multiline = false }: {
+    icon: any;
+    label: string;
+    value: string;
+    fieldKey: keyof IChapterMeta;
+    multiline?: boolean;
+  }) => {
+    if (!isEditing) {
+      if (!value) return null;
+      return (
+        <div className="flex gap-2 text-sm">
+          <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-medium text-muted-foreground">{label}</div>
+            <div className="text-foreground leading-relaxed">{value}</div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-1">
+        <Label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <Icon className="size-3.5" />{label}
+        </Label>
+        {multiline ? (
+          <Textarea
+            value={value}
+            onChange={(e) => onUpdate({ [fieldKey]: e.target.value } as any)}
+            className="min-h-[60px] resize-y text-sm"
+          />
+        ) : (
+          <Input
+            value={value}
+            onChange={(e) => onUpdate({ [fieldKey]: e.target.value } as any)}
+            className="text-sm"
+          />
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <AccordionItem value={chapter.id} className="rounded-lg border border-border/60 bg-card px-4 shadow-sm first:mt-0">
+      <AccordionTrigger className="py-3 hover:no-underline">
+        <div className="flex w-full items-center gap-3 pr-2 text-left">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+            {chapter.chapterNumber || index + 1}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate font-medium text-foreground">{chapter.chapterTitle}</span>
+              <Badge variant="outline" className={`shrink-0 border-0 text-[10px] text-white ${phaseColor}`}>
+                {chapter.phase}
+              </Badge>
+            </div>
+            {chapter.coreEvent && (
+              <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{chapter.coreEvent}</div>
+            )}
+          </div>
+        </div>
+      </AccordionTrigger>
+      <AccordionContent>
+        <div className="space-y-4 pb-4">
+          {isEditing && (
+            <div className="flex items-center gap-3 rounded-md bg-muted/40 p-2">
+              <span className="text-xs font-medium text-muted-foreground">剧情阶段</span>
+              <Select value={chapter.phase} onValueChange={(v) => onUpdate({ phase: v as ChapterPhase })}>
+                <SelectTrigger className="h-8 flex-1 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="铺垫">起·铺垫</SelectItem>
+                  <SelectItem value="发展">承·发展</SelectItem>
+                  <SelectItem value="高潮">转·高潮</SelectItem>
+                  <SelectItem value="收尾">合·收尾</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <FieldRow icon={FileText} label="章节概要" value={chapter.chapterSummary} fieldKey="chapterSummary" multiline />
+          <FieldRow icon={Target} label="核心事件" value={chapter.coreEvent} fieldKey="coreEvent" multiline />
+          <FieldRow icon={Users} label="出场人物" value={chapter.characters} fieldKey="characters" multiline />
+          <FieldRow icon={MapPin} label="场景地点" value={chapter.sceneLocation} fieldKey="sceneLocation" />
+          <FieldRow icon={Heart} label="情绪基调" value={chapter.moodTone} fieldKey="moodTone" />
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <FieldRow icon={Compass} label="本章起点" value={chapter.chapterStart} fieldKey="chapterStart" multiline />
+            <FieldRow icon={TrendingUp} label="本章终点" value={chapter.chapterEnd} fieldKey="chapterEnd" multiline />
+          </div>
+
+          <FieldRow icon={Lightbulb} label="关键伏笔/悬念" value={chapter.foreshadowing} fieldKey="foreshadowing" multiline />
+        </div>
+      </AccordionContent>
+    </AccordionItem>
+  );
 }
