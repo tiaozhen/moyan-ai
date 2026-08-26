@@ -83,5 +83,9 @@
     "eslint": "^9",
     "typescript": "~5.9",
     "vite": "^8"
+  },
+  "actionPlugins": {
+    "@official-plugins/ai-text-generate": "1.0.18",
+    "@official-plugins/ai-text-to-json": "1.0.24"
   }
 }

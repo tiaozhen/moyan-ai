@@ -1,0 +1,58 @@
+{
+  "id": "story_outline_generator_1",
+  "pluginKey": "@official-plugins/ai-text-to-json",
+  "pluginVersion": "1.0.24",
+  "name": "故事骨架生成器",
+  "description": "基于一句话大纲生成结构化故事骨架，包含人物设定、世界观、剧情节点、起承转合、章节规划等核心内容",
+  "icon": "",
+  "paramsSchema": {
+    "type": "object",
+    "properties": {
+      "story_outline": {
+        "type": "string",
+        "description": "故事的一句话核心大纲"
+      }
+    },
+    "required": [
+      "story_outline"
+    ]
+  },
+  "formValue": {
+    "prompt": "你是一位专业的故事架构师，擅长构建逻辑严谨、层次清晰的故事框架。请根据以下一句话大纲，生成完整的故事骨架：\n一句话大纲：{{input.story_outline}}\n\n输出要求：内容完整、逻辑自洽、具备可扩展性，符合故事创作的通用规律。",
+    "jsonStructure": [
+      {
+        "name": "character_settings",
+        "paramDescription": "主要人物设定列表，items schema: {name: string(人物姓名), identity: string(身份背景), personality: string(性格特点), core_demand: string(核心诉求), character_arc: string(人物成长弧光)}",
+        "paramType": "Array"
+      },
+      {
+        "name": "world_view",
+        "paramDescription": "世界观设定，schema: {background: string(时代/世界背景), rules: string(世界运行规则), core_conflict_environment: string(核心冲突环境)}",
+        "paramType": "Object"
+      },
+      {
+        "paramType": "Array",
+        "name": "plot_nodes",
+        "paramDescription": "核心剧情节点列表，items schema: {node_name: string(节点名称), node_content: string(节点内容), importance: string(重要程度：高/中/低)}"
+      },
+      {
+        "name": "narrative_structure",
+        "paramDescription": "起承转合结构，schema: {opening: string(开端：故事背景与人物引入), development: string(发展：冲突升级与事件展开), climax: string(高潮：核心冲突爆发与关键抉择), ending: string(结局：冲突解决与故事收尾)}",
+        "paramType": "Object"
+      },
+      {
+        "paramDescription": "章节规划列表，items schema: {chapter_number: string(章节序号), chapter_title: string(章节标题), chapter_summary: string(章节概要), core_event: string(核心事件)}",
+        "paramType": "Array",
+        "name": "chapter_plan"
+      }
+    ],
+    "modelID": "2015",
+    "modelParams": {
+      "maxTokens": 8192,
+      "temperature": 0.5
+    }
+  },
+  "createdAt": 1787731678846,
+  "updatedAt": 1787731678846,
+  "createdBy": 7590754797951683546
+}

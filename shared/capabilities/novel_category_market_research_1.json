@@ -1,0 +1,83 @@
+{
+  "id": "novel_category_market_research_1",
+  "pluginKey": "@official-plugins/ai-text-to-json",
+  "pluginVersion": "1.0.24",
+  "name": "小说品类市场调研数据生成",
+  "description": "根据输入的小说品类方向，生成结构化的品类调研数据，包含热度指数、竞争烈度、读者画像、增长趋势、多维度评分等信息",
+  "icon": "",
+  "paramsSchema": {
+    "type": "object",
+    "properties": {
+      "category_direction": {
+        "type": "string",
+        "description": "小说品类方向，如：玄幻、都市、言情、科幻、悬疑等"
+      }
+    },
+    "required": [
+      "category_direction"
+    ]
+  },
+  "formValue": {
+    "modelID": "2015",
+    "modelParams": {
+      "temperature": 0.5,
+      "maxTokens": 8192
+    },
+    "prompt": "你是一位专业的网文行业市场分析师，拥有丰富的小说品类调研经验和行业数据积累。\n\n请针对以下小说品类方向进行全面的市场调研分析：\n品类方向：{{input.category_direction}}\n\n调研分析要求：\n1. 数据真实客观，符合当前网文市场实际情况\n2. 各维度指标要具体量化，具备参考价值\n3. 读者画像要详细，包含年龄分布、性别占比、兴趣标签等关键信息\n4. 增长趋势要包含近3个月的变化情况和未来3个月的预测\n5. 多维度评分采用10分制，评分依据要充分合理",
+    "jsonStructure": [
+      {
+        "name": "category_name",
+        "paramDescription": "小说品类名称",
+        "paramType": "String"
+      },
+      {
+        "name": "heat_index",
+        "paramDescription": "品类热度指数（0-100）",
+        "paramType": "Number"
+      },
+      {
+        "name": "competition_level",
+        "paramDescription": "竞争烈度等级，可选值：低、中低、中、中高、高",
+        "paramType": "String"
+      },
+      {
+        "name": "competition_score",
+        "paramDescription": "竞争烈度评分（1-10分，分数越高竞争越激烈）",
+        "paramType": "Number"
+      },
+      {
+        "name": "reader_profile",
+        "paramDescription": "读者画像信息，schema: {age_distribution: Array(年龄分布列表), gender_ratio: Object(性别占比，包含male_percent和female_percent字段), interest_tags: Array(兴趣标签列表), reading_preferences: Array(阅读偏好列表)}",
+        "paramType": "Object"
+      },
+      {
+        "name": "growth_trend",
+        "paramDescription": "增长趋势信息，schema: {past_3_months_trend: String(近3个月趋势：上升/平稳/下降), past_3_months_growth_rate: Number(近3个月增长率百分比), future_3_months_forecast: String(未来3个月预测：上升/平稳/下降), future_3_months_expected_growth_rate: Number(未来3个月预期增长率百分比)}",
+        "paramType": "Object"
+      },
+      {
+        "paramType": "Object",
+        "name": "dimension_scores",
+        "paramDescription": "多维度评分（1-10分），schema: {market_potential: Number(市场潜力评分), monetization_potential: Number(变现潜力评分), creative_difficulty: Number(创作难度评分), reader_stickiness: Number(读者粘性评分), development_prospect: Number(发展前景评分)}"
+      },
+      {
+        "name": "hot_keywords",
+        "paramDescription": "品类热门关键词列表",
+        "paramType": "Array"
+      },
+      {
+        "name": "representative_works",
+        "paramDescription": "代表作品列表，items schema: {work_name: String(作品名称), author: String(作者名称), popularity: String(人气情况)}",
+        "paramType": "Array"
+      },
+      {
+        "paramDescription": "品类发展建议",
+        "paramType": "String",
+        "name": "development_suggestions"
+      }
+    ]
+  },
+  "createdAt": 1787731666295,
+  "updatedAt": 1787731666295,
+  "createdBy": 7590754797951683546
+}

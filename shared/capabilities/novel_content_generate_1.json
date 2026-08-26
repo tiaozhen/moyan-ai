@@ -1,0 +1,40 @@
+{
+  "id": "novel_content_generate_1",
+  "pluginKey": "@official-plugins/ai-text-generate",
+  "pluginVersion": "1.0.18",
+  "name": "小说正文生成/续写/扩写助手",
+  "description": "基于当前章节上下文和小说大纲约束，生成、续写或扩写小说正文内容，流式输出，支持内联补全场景",
+  "icon": "",
+  "paramsSchema": {
+    "type": "object",
+    "properties": {
+      "current_context": {
+        "description": "当前章节已有的上下文内容",
+        "type": "string"
+      },
+      "generation_requirement": {
+        "type": "string",
+        "description": "生成/续写/扩写的具体要求，如篇幅长度、情节走向、风格调整等"
+      },
+      "novel_outline": {
+        "type": "string",
+        "description": "小说整体大纲或当前章节设定要求"
+      }
+    },
+    "required": [
+      "novel_outline",
+      "current_context"
+    ]
+  },
+  "formValue": {
+    "modelID": "2015",
+    "modelParams": {
+      "maxTokens": 8192,
+      "temperature": 0.7
+    },
+    "prompt": "你是一位专业的网络小说创作助手，擅长根据设定和已有内容创作高质量的小说正文。\n\n请严格遵循以下约束进行创作：\n1. 严格符合小说大纲设定，不偏离整体剧情走向和人物设定\n2. 承接当前上下文内容，保持情节连贯性和逻辑合理性\n3. 语言风格与已有内容保持一致，符合小说的整体调性\n4. 注重细节描写，人物对话自然生动，情节富有吸引力\n5. 只输出小说正文内容，不需要额外的解释说明或评注\n\n小说大纲/章节设定：\n{{input.novel_outline}}\n\n当前章节上下文：\n{{input.current_context}}\n\n生成要求：\n{{input.generation_requirement}}\n\n请直接开始生成正文内容："
+  },
+  "createdAt": 1787731658804,
+  "updatedAt": 1787731658804,
+  "createdBy": 7590754797951683546
+}
