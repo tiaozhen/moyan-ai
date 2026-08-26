@@ -14,6 +14,7 @@ import {
   setCurrentArticle,
   updateCurrentArticle,
   setArticleCurrentChapterId,
+  deleteArticle as deleteArticleFromState,
 } from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { buildChapterGenerationInput } from '@/lib/chapter-context';
@@ -71,6 +72,28 @@ export default function NovelGeneratorPage() {
       setChapters(article?.chapters || []);
       setCurrentChapterId(article?.currentChapterId || article?.chapters[0]?.id || null);
       setSkeleton(article?.storySkeleton || null);
+      setGhostText('');
+    },
+    []
+  );
+
+  const handleDeleteArticle = useCallback(
+    (articleId: string) => {
+      const state = loadCreationState();
+      const next = deleteArticleFromState(state, articleId);
+      saveCreationState(next);
+      setArticles(next.articles);
+      setCurrentArticleIdState(next.currentArticleId);
+      if (next.currentArticleId) {
+        const article = next.articles.find((a) => a.id === next.currentArticleId) || null;
+        setChapters(article?.chapters || []);
+        setCurrentChapterId(article?.currentChapterId || article?.chapters[0]?.id || null);
+        setSkeleton(article?.storySkeleton || null);
+      } else {
+        setChapters([]);
+        setCurrentChapterId(null);
+        setSkeleton(null);
+      }
       setGhostText('');
     },
     []
@@ -438,6 +461,7 @@ export default function NovelGeneratorPage() {
               articles={articles}
               currentArticleId={currentArticleId}
               onSwitch={handleSwitchArticle}
+              onDelete={handleDeleteArticle}
               showProgress
             />
           )}

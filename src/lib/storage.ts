@@ -125,7 +125,19 @@ export function setArticleCurrentChapterId(state: ICreationState, chapterId: str
   return updateCurrentArticle(state, (a) => ({ ...a, currentChapterId: chapterId }));
 }
 
-// 主题持久化
+/** 删除指定文章，若为当前文章则自动切换到下一篇或置空 */
+export function deleteArticle(state: ICreationState, articleId: string): ICreationState {
+  const remaining = state.articles.filter((a) => a.id !== articleId);
+  let nextCurrentId = state.currentArticleId;
+  if (state.currentArticleId === articleId) {
+    nextCurrentId = remaining.length > 0 ? remaining[0].id : null;
+  }
+  return {
+    ...state,
+    articles: remaining,
+    currentArticleId: nextCurrentId,
+  };
+}
 const THEME_KEY = 'novel_theme';
 
 export function loadTheme(): 'light' | 'dark' {

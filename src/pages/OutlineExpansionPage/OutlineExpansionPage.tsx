@@ -42,6 +42,7 @@ import {
   updateCurrentArticle,
   setArticleSkeleton,
   setCurrentArticle,
+  deleteArticle as deleteArticleFromState,
 } from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
 import ArticleSwitcher from '@/components/ArticleSwitcher';
@@ -102,6 +103,23 @@ export default function OutlineExpansionPage() {
       setCurrentArticleIdState(next.currentArticleId);
       const article = next.articles.find((a) => a.id === articleId) || null;
       setSkeleton(article?.storySkeleton || null);
+    },
+    []
+  );
+
+  const handleDeleteArticle = useCallback(
+    (articleId: string) => {
+      const state = loadCreationState();
+      const next = deleteArticleFromState(state, articleId);
+      saveCreationState(next);
+      setArticles(next.articles);
+      setCurrentArticleIdState(next.currentArticleId);
+      if (next.currentArticleId) {
+        const article = next.articles.find((a) => a.id === next.currentArticleId) || null;
+        setSkeleton(article?.storySkeleton || null);
+      } else {
+        setSkeleton(null);
+      }
     },
     []
   );
@@ -213,6 +231,7 @@ export default function OutlineExpansionPage() {
           articles={articles}
           currentArticleId={currentArticleId}
           onSwitch={handleSwitchArticle}
+          onDelete={handleDeleteArticle}
         />
       </div>
 
