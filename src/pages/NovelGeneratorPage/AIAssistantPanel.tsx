@@ -1,10 +1,13 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Sparkles,
   Wand2,
   Maximize2,
   Loader2,
   CheckCircle2,
+  FileText,
+  ChevronRight,
+  AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -13,8 +16,19 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { IChapter, IStorySkeleton } from '@/data/novel';
 import { useGeneration } from '@/contexts/GenerationContext';
+import { loadCreationState } from '@/lib/storage';
 
 interface AIAssistantPanelProps {
   currentChapter: IChapter | null;
@@ -24,9 +38,74 @@ interface AIAssistantPanelProps {
   onReplaceSelection: (text: string) => void;
   isGenerating: boolean;
   setIsGenerating: (v: boolean) => void;
+  onGenerateNextChapter?: () => void;
+  hasNextChapter: boolean;
 }
 
 type AIAction = 'continue' | 'polish' | 'expand' | null;
+
+// 构建整章生成需要的完整上下文
+function buildChapterGenerationContext(
+  chapter: IChapter,
+  skeleton: IStorySkeleton | null,
+  allChapters: IChapter[]
+): { novel_outline: string; current_context: string; generation_requirement: string } {
+  const idx = allChapters.findIndex((c) => c.id === chapter.id);
+  const prevChapters = allChapters.slice(0, idx);
+
+  // 故事骨架部分
+  const skeletonParts: string[] = [];
+  if (skeleton) {
+    const chars = skeleton.characterSettings
+      .slice(0, 5)
+      .map((c) => `${c.name}（${c.identity}）：${c.personality || c.coreDemand || ''}`)
+      .join('；');
+    if (chars) skeletonParts.push(`主要人物：${chars}`);
+    if (skeleton.worldView?.background) {
+      skeletonParts.push(`世界观背景：${skeleton.worldView.background}`);
+    }
+  }
+
+  // 前文摘要（前面章节正文摘要，避免超长）
+  let prevContext = '';
+  if (prevChapters.length > 0) {
+    const prevTexts: string[] = [];
+    let totalLen = 0;
+    for (let i = prevChapters.length - 1; i >= 0; i--) {
+      const ch = prevChapters[i];
+      const plain = ch.content.replace(/<[^>]+>/g, '').trim();
+      if (!plain) continue;
+      // 最近 3 章保留全文摘要，更早的只留标题
+      const distance = prevChapters.length - i;
+      if (distance <= 3) {
+        const snippet = plain.slice(0, 800);
+        prevTexts.unshift(`【第${ch.chapterNumber}章 ${ch.chapterTitle}】${snippet}${plain.length > 800 ? '...' : ''}`);
+        totalLen += snippet.length;
+        if (totalLen > 2000) break;
+      } else {
+        prevTexts.unshift(`【第${ch.chapterNumber}章 ${ch.chapterTitle}】${ch.chapterSummary || ''}`);
+      }
+    }
+    prevContext = prevTexts.join('\n\n');
+  }
+
+  const generationRequirement = [
+    `请生成《第${chapter.chapterNumber}章 ${chapter.chapterTitle}》的完整正文内容。`,
+    chapter.chapterSummary ? `本章概要：${chapter.chapterSummary}` : '',
+    chapter.coreEvent ? `本章核心事件：${chapter.coreEvent}` : '',
+    '字数控制在2000-3000字之间，分多个自然段落，对话和描写比例合理。',
+    '严格承接前面章节的剧情、人物关系和世界观设定，保持人物性格一致、情节连贯。',
+    '只输出正文内容，不要章节标题，不要任何解释或说明。',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    novel_outline: skeletonParts.join('\n'),
+    current_context: prevContext,
+    generation_requirement: generationRequirement,
+  };
+}
 
 export default function AIAssistantPanel({
   currentChapter,
@@ -36,12 +115,115 @@ export default function AIAssistantPanel({
   onReplaceSelection,
   isGenerating,
   setIsGenerating,
+  onGenerateNextChapter,
+  hasNextChapter,
 }: AIAssistantPanelProps) {
   const [activeAction, setActiveAction] = useState<AIAction>(null);
   const [customPrompt, setCustomPrompt] = useState('');
   const [streamingText, setStreamingText] = useState('');
-  const { startNovelGeneration, getNovelStreamingText, isTaskRunning, tasks } = useGeneration();
+  const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const {
+    startNovelGeneration,
+    getNovelStreamingText,
+    isTaskRunning,
+    startChapterGeneration,
+    getChapterStreamingText,
+    isChapterGenerating,
+    getGeneratingChapterId,
+  } = useGeneration();
   const pollRef = useRef<number | null>(null);
+
+  const chapterGenerating =
+    isTaskRunning('novel_chapter_generate') &&
+    currentChapter &&
+    isChapterGenerating(currentChapter.id);
+
+  const anyNovelTaskRunning =
+    isTaskRunning('novel_continue') ||
+    isTaskRunning('novel_polish') ||
+    isTaskRunning('novel_expand');
+
+  // 整体生成中状态（包括整章生成）
+  const overallGenerating = isGenerating || isTaskRunning('novel_chapter_generate');
+
+  // 轮询同步流式文本（后台生成时也能看到）
+  useEffect(() => {
+    if (!anyNovelTaskRunning && !chapterGenerating) {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = window.setInterval(() => {
+      if (chapterGenerating) {
+        setStreamingText(getChapterStreamingText());
+      } else if (anyNovelTaskRunning) {
+        setStreamingText(getNovelStreamingText());
+      }
+    }, 150);
+    return () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [
+    anyNovelTaskRunning,
+    chapterGenerating,
+    getNovelStreamingText,
+    getChapterStreamingText,
+  ]);
+
+  // 同步全局生成状态到本地 isGenerating
+  useEffect(() => {
+    setIsGenerating(anyNovelTaskRunning || isTaskRunning('novel_chapter_generate'));
+    if (!anyNovelTaskRunning && !isTaskRunning('novel_chapter_generate')) {
+      // 生成结束后延迟清空流式文本，让用户看到完成态
+      const timer = window.setTimeout(() => setStreamingText(''), 2000);
+      return () => window.clearTimeout(timer);
+    }
+    return;
+  }, [anyNovelTaskRunning, isTaskRunning, setIsGenerating]);
+
+  // 切页回来时恢复 activeAction
+  useEffect(() => {
+    if (isTaskRunning('novel_continue')) setActiveAction('continue');
+    else if (isTaskRunning('novel_polish')) setActiveAction('polish');
+    else if (isTaskRunning('novel_expand')) setActiveAction('expand');
+  }, [isTaskRunning]);
+
+  // ========== 整章生成 ==========
+  const handleGenerateChapter = useCallback(async () => {
+    if (!currentChapter || !skeleton || chapterGenerating) return;
+
+    // 如果已有内容，弹窗确认
+    if (currentChapter.content && currentChapter.content.trim().length > 0) {
+      setShowRegenerateConfirm(true);
+      return;
+    }
+    startGeneration();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChapter, skeleton, chapterGenerating]);
+
+  const startGeneration = useCallback(async () => {
+    if (!currentChapter || !skeleton) return;
+
+    const state = loadCreationState();
+    const input = buildChapterGenerationContext(currentChapter, skeleton, state.chapters);
+
+    // 加上用户自定义指令
+    if (customPrompt.trim()) {
+      input.generation_requirement += `\n额外要求：${customPrompt.trim()}`;
+    }
+
+    await startChapterGeneration({
+      chapterId: currentChapter.id,
+      pluginId: 'novel_content_generate_1',
+      input,
+    });
+    setCustomPrompt('');
+  }, [currentChapter, skeleton, customPrompt, startChapterGeneration]);
 
   const buildOutlineContext = useCallback(() => {
     if (!skeleton) return '';
@@ -51,50 +233,6 @@ export default function AIAssistantPanel({
       .join('、');
     return `故事背景：${skeleton.worldView.background}\n主要人物：${mainChars}\n当前章节：${currentChapter?.chapterTitle || ''}\n章节概要：${currentChapter?.chapterSummary || ''}`;
   }, [skeleton, currentChapter]);
-
-  // 轮询同步流式文本（后台生成时也能看到）
-  useEffect(() => {
-    if (!isGenerating) {
-      if (pollRef.current) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      return;
-    }
-    pollRef.current = window.setInterval(() => {
-      const text = getNovelStreamingText();
-      setStreamingText(text);
-    }, 150);
-    return () => {
-      if (pollRef.current) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [isGenerating, getNovelStreamingText]);
-
-  // 同步全局生成状态到本地 isGenerating
-  const anyNovelTaskRunning =
-    isTaskRunning('novel_continue') ||
-    isTaskRunning('novel_polish') ||
-    isTaskRunning('novel_expand');
-
-  useEffect(() => {
-    setIsGenerating(anyNovelTaskRunning);
-    if (!anyNovelTaskRunning) {
-      // 生成结束后清空流式文本（延迟一点让用户看到完成状态）
-      const timer = window.setTimeout(() => setStreamingText(''), 2000);
-      return () => window.clearTimeout(timer);
-    }
-    return;
-  }, [anyNovelTaskRunning, setIsGenerating]);
-
-  // 切页回来时，如果后台还在生成，恢复 activeAction 显示
-  useEffect(() => {
-    if (isTaskRunning('novel_continue')) setActiveAction('continue');
-    else if (isTaskRunning('novel_polish')) setActiveAction('polish');
-    else if (isTaskRunning('novel_expand')) setActiveAction('expand');
-  }, [isTaskRunning]);
 
   const handleAction = useCallback(
     async (action: AIAction) => {
@@ -174,6 +312,11 @@ export default function AIAssistantPanel({
     ]
   );
 
+  const isCurrentGenerating = useMemo(() => {
+    if (!currentChapter) return false;
+    return isChapterGenerating(currentChapter.id);
+  }, [currentChapter, isChapterGenerating]);
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-border px-4 py-3">
@@ -182,16 +325,66 @@ export default function AIAssistantPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* 快捷操作 */}
+        {/* 一键生成本章 */}
         <div className="space-y-2">
-          <div className="text-xs font-medium text-muted-foreground">快捷操作</div>
+          <div className="text-xs font-medium text-muted-foreground">一键生成</div>
+          <Button
+            variant="default"
+            size="sm"
+            className="w-full gap-2"
+            onClick={handleGenerateChapter}
+            disabled={!currentChapter || overallGenerating || !skeleton}
+          >
+            {isCurrentGenerating ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                正在生成本章...
+              </>
+            ) : (
+              <>
+                <Sparkles className="size-4" />
+                {currentChapter?.content && currentChapter.content.trim().length > 0
+                  ? '重新生成本章'
+                  : 'AI 生成本章'}
+              </>
+            )}
+          </Button>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            基于故事骨架、前文内容和章节规划，自动生成完整一章正文
+          </p>
+        </div>
+
+        {/* 生成下一章 */}
+        {hasNextChapter && onGenerateNextChapter && !overallGenerating && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full gap-2"
+            onClick={onGenerateNextChapter}
+            disabled={!currentChapter}
+          >
+            <ChevronRight className="size-4" />
+            生成下一章
+          </Button>
+        )}
+
+        <Separator />
+
+        {/* 快捷操作（微调） */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-medium text-muted-foreground">微调工具</div>
+            <Badge variant="outline" className="text-[10px] font-normal">
+              选中文本后可用
+            </Badge>
+          </div>
           <div className="grid grid-cols-1 gap-2">
             <Button
-              variant="default"
+              variant="secondary"
               size="sm"
               className="justify-start gap-2"
               onClick={() => handleAction('continue')}
-              disabled={!currentChapter || isGenerating}
+              disabled={!currentChapter || overallGenerating}
             >
               {activeAction === 'continue' ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -206,7 +399,7 @@ export default function AIAssistantPanel({
               size="sm"
               className="justify-start gap-2"
               onClick={() => handleAction('polish')}
-              disabled={!currentChapter || isGenerating}
+              disabled={!currentChapter || overallGenerating || !selectedText}
             >
               {activeAction === 'polish' ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -221,7 +414,7 @@ export default function AIAssistantPanel({
               size="sm"
               className="justify-start gap-2"
               onClick={() => handleAction('expand')}
-              disabled={!currentChapter || isGenerating}
+              disabled={!currentChapter || overallGenerating}
             >
               {activeAction === 'expand' ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -243,7 +436,8 @@ export default function AIAssistantPanel({
             placeholder="例如：增加环境描写、让对话更幽默、加入悬疑元素..."
             value={customPrompt}
             onChange={(e) => setCustomPrompt(e.target.value)}
-            className="min-h-[80px] resize-none text-sm"
+            className="min-h-[70px] resize-none text-sm"
+            disabled={overallGenerating}
           />
         </div>
 
@@ -251,7 +445,7 @@ export default function AIAssistantPanel({
 
         {/* 流式预览 */}
         <AnimatePresence>
-          {(isGenerating || streamingText) && (
+          {(overallGenerating || streamingText) && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
@@ -259,10 +453,10 @@ export default function AIAssistantPanel({
               className="space-y-2 overflow-hidden"
             >
               <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                {isGenerating ? (
+                {overallGenerating ? (
                   <>
                     <Loader2 className="size-3 animate-spin" />
-                    AI 生成中...
+                    {isCurrentGenerating ? '整章生成中...' : 'AI 生成中...'}
                   </>
                 ) : (
                   <>
@@ -320,6 +514,30 @@ export default function AIAssistantPanel({
           </>
         )}
       </div>
+
+      {/* 重新生成确认对话框 */}
+      <AlertDialog open={showRegenerateConfirm} onOpenChange={setShowRegenerateConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="size-5 text-warning" />
+              重新生成章节
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              当前章节已有内容，重新生成将覆盖现有正文。此操作不可撤销，确定继续吗？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={startGeneration}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              确定重新生成
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

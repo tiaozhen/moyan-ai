@@ -26,7 +26,8 @@ export type GenerationTaskType =
   | 'story_skeleton'
   | 'novel_continue'
   | 'novel_polish'
-  | 'novel_expand';
+  | 'novel_expand'
+  | 'novel_chapter_generate';
 
 export interface IGenerationTask {
   id: string;
@@ -59,6 +60,15 @@ interface GenerationContextValue {
   getNovelStreamingText: () => string;
   // 取消
   cancelTask: (type: GenerationTaskType) => void;
+  // 整章生成（流式）
+  startChapterGeneration: (params: {
+    chapterId: string;
+    pluginId: string;
+    input: any;
+  }) => Promise<string | null>;
+  getChapterStreamingText: () => string;
+  isChapterGenerating: (chapterId: string) => boolean;
+  getGeneratingChapterId: () => string | null;
 }
 
 const GenerationContext = createContext<GenerationContextValue | null>(null);
@@ -70,6 +80,7 @@ const TASK_LABELS: Record<GenerationTaskType, string> = {
   novel_continue: '小说续写',
   novel_polish: '小说润色',
   novel_expand: '小说扩写',
+  novel_chapter_generate: '整章生成',
 };
 
 export function GenerationProvider({ children }: { children: ReactNode }) {
@@ -77,6 +88,8 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
   // 用 ref 持有流式文本实时值，避免 setState 导致 Provider 全量重渲
   const outlineStreamingRef = useRef('');
   const novelStreamingRef = useRef('');
+  const chapterStreamingRef = useRef('');
+  const generatingChapterIdRef = useRef<string | null>(null);
   // 运行中任务类型集合（用 ref 跟踪，避免闭包旧值问题）
   const runningTypesRef = useRef<Set<GenerationTaskType>>(new Set());
   const cancelledTypesRef = useRef<Set<GenerationTaskType>>(new Set());
@@ -396,6 +409,95 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
 
   const getNovelStreamingText = useCallback(() => novelStreamingRef.current, []);
 
+  // ========== 整章生成 ==========
+  const startChapterGeneration = useCallback(
+    async (params: {
+      chapterId: string;
+      pluginId: string;
+      input: any;
+    }): Promise<string | null> => {
+      const { chapterId, pluginId, input } = params;
+      const type: GenerationTaskType = 'novel_chapter_generate';
+      const ok = startTask(type);
+      if (!ok) return null;
+
+      chapterStreamingRef.current = '';
+      generatingChapterIdRef.current = chapterId;
+      setTaskProgress(type, '准备生成章节...');
+
+      try {
+        const stream = capabilityClient.load(pluginId).callStream('textGenerate', input);
+        let full = '';
+
+        for await (const chunk of stream as any) {
+          if (cancelledTypesRef.current.has(type)) {
+            return null;
+          }
+          const piece = chunk.content ?? chunk.response ?? '';
+          if (piece) {
+            full += piece;
+            chapterStreamingRef.current = full;
+            setTaskProgress(type, `已生成约 ${full.length} 字...`);
+            // 每 chunk 都实时写入 storage，保证切页不丢进度
+            const state = loadCreationState();
+            const updatedChapters: IChapter[] = state.chapters.map((c) => {
+              if (c.id !== chapterId) return c;
+              const htmlContent = full
+                .split('\n')
+                .filter((p) => p.trim())
+                .map((p) => `<p>${p}</p>`)
+                .join('');
+              return {
+                ...c,
+                content: htmlContent,
+                status: 'generated' as const,
+                lastModified: Date.now(),
+              };
+            });
+            saveCreationState({
+              ...state,
+              chapters: updatedChapters,
+              currentChapterId: state.currentChapterId || chapterId,
+            });
+          }
+        }
+
+        if (full) {
+          markTaskDone(type);
+          toast.success('章节生成完成');
+          return full;
+        }
+
+        markTaskDone(type, '生成内容为空');
+        return null;
+      } catch (err) {
+        logger.error('章节生成失败:', String(err));
+        markTaskDone(type, String(err));
+        toast.error('章节生成失败，请重试');
+        return null;
+      } finally {
+        // 延迟清理 generatingChapterId，让 UI 有时间展示完成态
+        window.setTimeout(() => {
+          if (generatingChapterIdRef.current === chapterId) {
+            generatingChapterIdRef.current = null;
+          }
+        }, 1000);
+      }
+    },
+    [startTask, setTaskProgress, markTaskDone]
+  );
+
+  const getChapterStreamingText = useCallback(() => chapterStreamingRef.current, []);
+
+  const isChapterGenerating = useCallback(
+    (chapterId: string) =>
+      runningTypesRef.current.has('novel_chapter_generate') &&
+      generatingChapterIdRef.current === chapterId,
+    []
+  );
+
+  const getGeneratingChapterId = useCallback(() => generatingChapterIdRef.current, []);
+
   // 自动清理已完成任务（30s 后移除）
   useEffect(() => {
     const doneTasks = tasks.filter((t) => t.status === 'done' || t.status === 'error');
@@ -418,6 +520,10 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
       startNovelGeneration,
       getNovelStreamingText,
       cancelTask,
+      startChapterGeneration,
+      getChapterStreamingText,
+      isChapterGenerating,
+      getGeneratingChapterId,
     }),
     [
       tasks,
@@ -430,6 +536,10 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
       startNovelGeneration,
       getNovelStreamingText,
       cancelTask,
+      startChapterGeneration,
+      getChapterStreamingText,
+      isChapterGenerating,
+      getGeneratingChapterId,
     ]
   );
 
