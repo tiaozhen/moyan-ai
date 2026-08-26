@@ -471,9 +471,10 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
         markTaskDone(type, '生成内容为空');
         return null;
       } catch (err) {
-        logger.error('章节生成失败:', String(err));
-        markTaskDone(type, String(err));
-        toast.error('章节生成失败，请重试');
+        const errMsg = extractErrorMessage(err);
+        logger.error('章节生成失败:', errMsg);
+        markTaskDone(type, errMsg);
+        toast.error(`章节生成失败：${errMsg}`);
         return null;
       } finally {
         // 延迟清理 generatingChapterId，让 UI 有时间展示完成态
@@ -497,6 +498,33 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
   );
 
   const getGeneratingChapterId = useCallback(() => generatingChapterIdRef.current, []);
+
+  // 从 Error 对象中提取可读的错误信息
+  function extractErrorMessage(err: unknown): string {
+    if (!err) return '未知错误';
+    if (err instanceof Error) {
+      // 优先看 message
+      let msg = err.message || String(err);
+      // 尝试解析 message 中的 JSON 错误
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed.message) msg = parsed.message;
+        else if (parsed.error) msg = parsed.error;
+        else if (parsed.msg) msg = parsed.msg;
+      } catch {
+        // 不是 JSON，用原 message
+      }
+      // 截断过长的错误信息
+      if (msg.length > 150) msg = msg.slice(0, 150) + '...';
+      return msg;
+    }
+    if (typeof err === 'string') return err.slice(0, 150);
+    try {
+      return JSON.stringify(err).slice(0, 150);
+    } catch {
+      return '未知错误';
+    }
+  }
 
   // 自动清理已完成任务（30s 后移除）
   useEffect(() => {

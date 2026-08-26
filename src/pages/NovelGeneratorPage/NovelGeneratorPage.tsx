@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import type { IChapter, IStorySkeleton } from '@/data/novel';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
 import { useGeneration } from '@/contexts/GenerationContext';
+import { buildChapterGenerationInput } from '@/lib/chapter-context';
 import ChapterList from './ChapterList';
 import EditorToolbar from './EditorToolbar';
 import AIAssistantPanel from './AIAssistantPanel';
@@ -256,70 +257,21 @@ export default function NovelGeneratorPage() {
         toast.warning('请先生成故事骨架');
         return;
       }
-      // 如果当前不在该章节，先切换过去
-      if (chapterId !== currentChapterId) {
-        handleSelectChapter(chapterId);
-      }
-      // 让 AIAssistantPanel 去触发（保持入口统一），这里只做章节列表按钮触发
-      // 实际触发由面板内部完成，但为了章节列表按钮也能触发，这里复制一份逻辑
       const state = loadCreationState();
       const chapter = state.chapters.find((c) => c.id === chapterId);
       if (!chapter) return;
 
-      // 构建上下文（与 AIAssistantPanel 中的 buildChapterGenerationContext 保持一致）
-      const idx = state.chapters.findIndex((c) => c.id === chapterId);
-      const prevChapters = state.chapters.slice(0, idx);
-
-      const skeletonParts: string[] = [];
-      const chars = skeleton.characterSettings
-        .slice(0, 5)
-        .map((c) => `${c.name}（${c.identity}）：${c.personality || c.coreDemand || ''}`)
-        .join('；');
-      if (chars) skeletonParts.push(`主要人物：${chars}`);
-      if (skeleton.worldView?.background) {
-        skeletonParts.push(`世界观背景：${skeleton.worldView.background}`);
+      // 如果当前不在该章节，先切换过去（保存当前内容）
+      if (chapterId !== currentChapterId) {
+        handleSelectChapter(chapterId);
       }
 
-      const prevTexts: string[] = [];
-      let totalLen = 0;
-      for (let i = prevChapters.length - 1; i >= 0; i--) {
-        const ch = prevChapters[i];
-        const plain = ch.content.replace(/<[^>]+>/g, '').trim();
-        if (!plain) {
-          prevTexts.unshift(`【第${ch.chapterNumber}章 ${ch.chapterTitle}】${ch.chapterSummary || ''}`);
-          continue;
-        }
-        const distance = prevChapters.length - i;
-        if (distance <= 3) {
-          const snippet = plain.slice(0, 800);
-          prevTexts.unshift(`【第${ch.chapterNumber}章 ${ch.chapterTitle}】${snippet}${plain.length > 800 ? '...' : ''}`);
-          totalLen += snippet.length;
-          if (totalLen > 2000) break;
-        } else {
-          prevTexts.unshift(`【第${ch.chapterNumber}章 ${ch.chapterTitle}】${ch.chapterSummary || ''}`);
-        }
-      }
-      const prevContext = prevTexts.join('\n\n');
-
-      const generationRequirement = [
-        `请生成《第${chapter.chapterNumber}章 ${chapter.chapterTitle}》的完整正文内容。`,
-        chapter.chapterSummary ? `本章概要：${chapter.chapterSummary}` : '',
-        chapter.coreEvent ? `本章核心事件：${chapter.coreEvent}` : '',
-        '字数控制在2000-3000字之间，分多个自然段落，对话和描写比例合理。',
-        '严格承接前面章节的剧情、人物关系和世界观设定，保持人物性格一致、情节连贯。',
-        '只输出正文内容，不要章节标题，不要任何解释或说明。',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      const input = buildChapterGenerationInput(chapter, skeleton, state.chapters);
 
       await startChapterGeneration({
         chapterId,
         pluginId: 'novel_content_generate_1',
-        input: {
-          novel_outline: skeletonParts.join('\n'),
-          current_context: prevContext,
-          generation_requirement: generationRequirement,
-        },
+        input,
       });
     },
     [skeleton, currentChapterId, handleSelectChapter, startChapterGeneration]

@@ -29,6 +29,7 @@ import {
 import type { IChapter, IStorySkeleton } from '@/data/novel';
 import { useGeneration } from '@/contexts/GenerationContext';
 import { loadCreationState } from '@/lib/storage';
+import { buildChapterGenerationInput } from '@/lib/chapter-context';
 
 interface AIAssistantPanelProps {
   currentChapter: IChapter | null;
@@ -43,69 +44,6 @@ interface AIAssistantPanelProps {
 }
 
 type AIAction = 'continue' | 'polish' | 'expand' | null;
-
-// 构建整章生成需要的完整上下文
-function buildChapterGenerationContext(
-  chapter: IChapter,
-  skeleton: IStorySkeleton | null,
-  allChapters: IChapter[]
-): { novel_outline: string; current_context: string; generation_requirement: string } {
-  const idx = allChapters.findIndex((c) => c.id === chapter.id);
-  const prevChapters = allChapters.slice(0, idx);
-
-  // 故事骨架部分
-  const skeletonParts: string[] = [];
-  if (skeleton) {
-    const chars = skeleton.characterSettings
-      .slice(0, 5)
-      .map((c) => `${c.name}（${c.identity}）：${c.personality || c.coreDemand || ''}`)
-      .join('；');
-    if (chars) skeletonParts.push(`主要人物：${chars}`);
-    if (skeleton.worldView?.background) {
-      skeletonParts.push(`世界观背景：${skeleton.worldView.background}`);
-    }
-  }
-
-  // 前文摘要（前面章节正文摘要，避免超长）
-  let prevContext = '';
-  if (prevChapters.length > 0) {
-    const prevTexts: string[] = [];
-    let totalLen = 0;
-    for (let i = prevChapters.length - 1; i >= 0; i--) {
-      const ch = prevChapters[i];
-      const plain = ch.content.replace(/<[^>]+>/g, '').trim();
-      if (!plain) continue;
-      // 最近 3 章保留全文摘要，更早的只留标题
-      const distance = prevChapters.length - i;
-      if (distance <= 3) {
-        const snippet = plain.slice(0, 800);
-        prevTexts.unshift(`【第${ch.chapterNumber}章 ${ch.chapterTitle}】${snippet}${plain.length > 800 ? '...' : ''}`);
-        totalLen += snippet.length;
-        if (totalLen > 2000) break;
-      } else {
-        prevTexts.unshift(`【第${ch.chapterNumber}章 ${ch.chapterTitle}】${ch.chapterSummary || ''}`);
-      }
-    }
-    prevContext = prevTexts.join('\n\n');
-  }
-
-  const generationRequirement = [
-    `请生成《第${chapter.chapterNumber}章 ${chapter.chapterTitle}》的完整正文内容。`,
-    chapter.chapterSummary ? `本章概要：${chapter.chapterSummary}` : '',
-    chapter.coreEvent ? `本章核心事件：${chapter.coreEvent}` : '',
-    '字数控制在2000-3000字之间，分多个自然段落，对话和描写比例合理。',
-    '严格承接前面章节的剧情、人物关系和世界观设定，保持人物性格一致、情节连贯。',
-    '只输出正文内容，不要章节标题，不要任何解释或说明。',
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  return {
-    novel_outline: skeletonParts.join('\n'),
-    current_context: prevContext,
-    generation_requirement: generationRequirement,
-  };
-}
 
 export default function AIAssistantPanel({
   currentChapter,
@@ -210,12 +148,12 @@ export default function AIAssistantPanel({
     if (!currentChapter || !skeleton) return;
 
     const state = loadCreationState();
-    const input = buildChapterGenerationContext(currentChapter, skeleton, state.chapters);
-
-    // 加上用户自定义指令
-    if (customPrompt.trim()) {
-      input.generation_requirement += `\n额外要求：${customPrompt.trim()}`;
-    }
+    const input = buildChapterGenerationInput(
+      currentChapter,
+      skeleton,
+      state.chapters,
+      customPrompt
+    );
 
     await startChapterGeneration({
       chapterId: currentChapter.id,
