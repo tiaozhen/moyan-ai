@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
 import type { IChapter, IStorySkeleton } from '@/data/novel';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
+import { useGeneration } from '@/contexts/GenerationContext';
 import ChapterList from './ChapterList';
 import EditorToolbar from './EditorToolbar';
 import AIAssistantPanel from './AIAssistantPanel';
@@ -19,9 +20,13 @@ export default function NovelGeneratorPage() {
   const [selectedText, setSelectedText] = useState('');
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [toolbarPos, setToolbarPos] = useState<{ top: number; left: number } | undefined>();
-  const [isGenerating, setIsGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [ghostText, setGhostText] = useState('');
+  const { isTaskRunning } = useGeneration();
+  const isGenerating =
+    isTaskRunning('novel_continue') ||
+    isTaskRunning('novel_polish') ||
+    isTaskRunning('novel_expand');
 
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -382,7 +387,7 @@ export default function NovelGeneratorPage() {
             onInsertText={handleInsertText}
             onReplaceSelection={handleReplaceSelection}
             isGenerating={isGenerating}
-            setIsGenerating={setIsGenerating}
+            setIsGenerating={() => {}}
           />
         </aside>
       </div>

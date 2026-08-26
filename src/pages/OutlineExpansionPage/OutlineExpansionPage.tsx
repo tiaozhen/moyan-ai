@@ -22,9 +22,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import type { IOutlineCard, IStorySkeleton, IChapter } from '@/data/novel';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
+import { useGeneration } from '@/contexts/GenerationContext';
 
 const SECTIONS = [
   { id: 'characters', label: '人物设定', icon: Users },
@@ -38,9 +38,10 @@ export default function OutlineExpansionPage() {
   const navigate = useNavigate();
   const [outline, setOutline] = useState<IOutlineCard | null>(null);
   const [skeleton, setSkeleton] = useState<IStorySkeleton | null>(null);
-  const [loading, setLoading] = useState(false);
   const [activeSection, setActiveSection] = useState('characters');
   const [editingField, setEditingField] = useState<string | null>(null);
+  const { startStorySkeleton, isTaskRunning, tasks } = useGeneration();
+  const loading = isTaskRunning('story_skeleton');
 
   useEffect(() => {
     const state = loadCreationState();
@@ -52,6 +53,17 @@ export default function OutlineExpansionPage() {
     }
   }, []);
 
+  // 生成完成后读最终数据（切页面回来也能拿到）
+  useEffect(() => {
+    const doneTask = tasks.find((t) => t.type === 'story_skeleton' && t.status === 'done');
+    if (doneTask) {
+      const state = loadCreationState();
+      if (state.storySkeleton) {
+        setSkeleton(state.storySkeleton);
+      }
+    }
+  }, [tasks]);
+
   const generateSkeleton = useCallback(async () => {
     if (!outline) {
       toast.warning('请先选择一个故事大纲');
@@ -59,30 +71,11 @@ export default function OutlineExpansionPage() {
       return;
     }
 
-    setLoading(true);
-    try {
-      const result = (await capabilityClient
-        .load('story_outline_generator_1')
-        .call('textToJson', { story_outline: outline.concept })) as any;
-
-      if (!result || !result.character_settings) {
-        toast.error('骨架生成失败，请重试');
-        return;
-      }
-
-      const mapped: IStorySkeleton = mapApiToSkeleton(result);
-      setSkeleton(mapped);
-      // 持久化骨架
-      const state = loadCreationState();
-      saveCreationState({ ...state, storySkeleton: mapped });
-      toast.success('故事骨架生成完成');
-    } catch (err) {
-      logger.error('故事骨架生成失败:', String(err));
-      toast.error('骨架生成失败，请重试');
-    } finally {
-      setLoading(false);
+    const result = await startStorySkeleton(outline.concept, mapApiToSkeleton);
+    if (result) {
+      setSkeleton(result);
     }
-  }, [outline, navigate]);
+  }, [outline, navigate, startStorySkeleton]);
 
   const handleConfirm = useCallback(() => {
     if (!skeleton) return;

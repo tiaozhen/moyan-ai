@@ -1,8 +1,9 @@
 import { NavLink } from 'react-router-dom';
-import { BarChart3, Lightbulb, GitBranch, BookOpen, Sun, Moon, PenTool } from 'lucide-react';
+import { BarChart3, Lightbulb, GitBranch, BookOpen, Sun, Moon, PenTool, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTheme } from 'next-themes';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useGeneration } from '@/contexts/GenerationContext';
 
 const NAV_ITEMS = [
   { path: '/', label: '品类调研', icon: BarChart3 },
@@ -14,6 +15,7 @@ const NAV_ITEMS = [
 export default function Header() {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const { tasks } = useGeneration();
 
   useEffect(() => {
     setMounted(true);
@@ -22,6 +24,10 @@ export default function Header() {
   const toggleTheme = () => {
     setTheme(theme === 'dark' ? 'light' : 'dark');
   };
+
+  const runningTasks = useMemo(() => tasks.filter((t) => t.status === 'running'), [tasks]);
+  const hasRunning = runningTasks.length > 0;
+  const primaryTask = runningTasks[0];
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-md">
@@ -59,6 +65,15 @@ export default function Header() {
         </div>
 
         <div className="flex items-center gap-2">
+          {hasRunning && primaryTask && (
+            <div className="hidden items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-sm md:flex">
+              <Loader2 className="size-3.5 animate-spin text-primary" />
+              <span className="font-medium text-foreground">正在生成{primaryTask.label}</span>
+              {primaryTask.progressText && (
+                <span className="max-w-[180px] truncate">{primaryTask.progressText}</span>
+              )}
+            </div>
+          )}
           {mounted && (
             <Button
               variant="ghost"

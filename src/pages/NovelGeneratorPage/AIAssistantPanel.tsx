@@ -8,13 +8,13 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import type { IChapter, IStorySkeleton } from '@/data/novel';
+import { useGeneration } from '@/contexts/GenerationContext';
 
 interface AIAssistantPanelProps {
   currentChapter: IChapter | null;
@@ -40,7 +40,8 @@ export default function AIAssistantPanel({
   const [activeAction, setActiveAction] = useState<AIAction>(null);
   const [customPrompt, setCustomPrompt] = useState('');
   const [streamingText, setStreamingText] = useState('');
-  const abortRef = useRef<AbortController | null>(null);
+  const { startNovelGeneration, getNovelStreamingText, isTaskRunning, tasks } = useGeneration();
+  const pollRef = useRef<number | null>(null);
 
   const buildOutlineContext = useCallback(() => {
     if (!skeleton) return '';
@@ -51,11 +52,54 @@ export default function AIAssistantPanel({
     return `故事背景：${skeleton.worldView.background}\n主要人物：${mainChars}\n当前章节：${currentChapter?.chapterTitle || ''}\n章节概要：${currentChapter?.chapterSummary || ''}`;
   }, [skeleton, currentChapter]);
 
+  // 轮询同步流式文本（后台生成时也能看到）
+  useEffect(() => {
+    if (!isGenerating) {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = window.setInterval(() => {
+      const text = getNovelStreamingText();
+      setStreamingText(text);
+    }, 150);
+    return () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [isGenerating, getNovelStreamingText]);
+
+  // 同步全局生成状态到本地 isGenerating
+  const anyNovelTaskRunning =
+    isTaskRunning('novel_continue') ||
+    isTaskRunning('novel_polish') ||
+    isTaskRunning('novel_expand');
+
+  useEffect(() => {
+    setIsGenerating(anyNovelTaskRunning);
+    if (!anyNovelTaskRunning) {
+      // 生成结束后清空流式文本（延迟一点让用户看到完成状态）
+      const timer = window.setTimeout(() => setStreamingText(''), 2000);
+      return () => window.clearTimeout(timer);
+    }
+    return;
+  }, [anyNovelTaskRunning, setIsGenerating]);
+
+  // 切页回来时，如果后台还在生成，恢复 activeAction 显示
+  useEffect(() => {
+    if (isTaskRunning('novel_continue')) setActiveAction('continue');
+    else if (isTaskRunning('novel_polish')) setActiveAction('polish');
+    else if (isTaskRunning('novel_expand')) setActiveAction('expand');
+  }, [isTaskRunning]);
+
   const handleAction = useCallback(
     async (action: AIAction) => {
-      if (!currentChapter || isGenerating) return;
+      if (!currentChapter || isGenerating || !action) return;
       setActiveAction(action);
-      setIsGenerating(true);
       setStreamingText('');
 
       const chapterContent = currentChapter.content || '';
@@ -63,11 +107,12 @@ export default function AIAssistantPanel({
       let pluginId = 'novel_content_generate_1';
       let input: any = {};
       let isReplace = false;
+      let taskType: 'novel_continue' | 'novel_polish' | 'novel_expand' = 'novel_continue';
 
       const outlineContext = buildOutlineContext();
 
       if (action === 'continue') {
-        // 续写：基于光标位置之后生成
+        taskType = 'novel_continue';
         pluginId = 'novel_content_generate_1';
         input = {
           novel_outline: outlineContext,
@@ -75,10 +120,9 @@ export default function AIAssistantPanel({
           generation_requirement: '续写当前章节，承接上下文，自然推进剧情，约800-1000字',
         };
       } else if (action === 'polish') {
-        // 润色：基于选中文本
+        taskType = 'novel_polish';
         if (!selectedText) {
           toast.info('请先选中要润色的段落');
-          setIsGenerating(false);
           setActiveAction(null);
           return;
         }
@@ -88,7 +132,7 @@ export default function AIAssistantPanel({
         };
         isReplace = true;
       } else if (action === 'expand') {
-        // 扩写：基于选中文本或光标位置
+        taskType = 'novel_expand';
         pluginId = 'novel_content_generate_1';
         const context = selectedText || chapterContent;
         input = {
@@ -106,45 +150,27 @@ export default function AIAssistantPanel({
         input.generation_requirement = (input.generation_requirement || '') + `。${customPrompt.trim()}`;
       }
 
-      try {
-        const stream = capabilityClient.load(pluginId).callStream('textGenerate', input);
-        let full = '';
-
-        for await (const chunk of stream as any) {
-          const piece = chunk.content ?? chunk.response ?? '';
-          if (piece) {
-            full += piece;
-            setStreamingText(full);
-          }
+      const applyResult = (text: string) => {
+        if (isReplace) {
+          onReplaceSelection(text);
+        } else {
+          onInsertText(text);
         }
+      };
 
-        // 流式结束，插入或替换
-        if (full) {
-          if (isReplace) {
-            onReplaceSelection(full);
-          } else {
-            onInsertText(full);
-          }
-          toast.success(action === 'polish' ? '润色完成' : action === 'expand' ? '扩写完成' : '续写完成');
-        }
-      } catch (err) {
-        logger.error('AI 生成失败:', String(err));
-        toast.error('AI 生成失败，请重试');
-      } finally {
-        setIsGenerating(false);
-        setActiveAction(null);
-        setCustomPrompt('');
-      }
+      await startNovelGeneration(taskType, pluginId, input, currentChapter.id, applyResult);
+      setActiveAction(null);
+      setCustomPrompt('');
     },
     [
       currentChapter,
       isGenerating,
       selectedText,
       buildOutlineContext,
+      customPrompt,
       onInsertText,
       onReplaceSelection,
-      customPrompt,
-      setIsGenerating,
+      startNovelGeneration,
     ]
   );
 
@@ -188,7 +214,7 @@ export default function AIAssistantPanel({
                 <Wand2 className="size-4" />
               )}
               润色
-              <span className="ml-auto text-xs text-muted-foreground">选中文本</span>
+              <span className="ml-auto text-xs text-muted-foreground">选中段落</span>
             </Button>
             <Button
               variant="secondary"

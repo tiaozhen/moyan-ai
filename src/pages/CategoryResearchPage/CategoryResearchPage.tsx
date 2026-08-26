@@ -10,18 +10,19 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
+import { loadCreationState, saveCreationState } from '@/lib/storage';
+import { useGeneration } from '@/contexts/GenerationContext';
 import type { ICategory, ICategoryResearchData } from '@/data/novel';
 import { CHART_COLORS, CHART_PRIMARY, CHART_SECONDARY } from '@/lib/chart-colors';
-import { loadCreationState, saveCreationState } from '@/lib/storage';
 
 const CATEGORY_DIRECTIONS = ['玄幻', '都市', '言情', '科幻', '悬疑', '历史'];
 
 export default function CategoryResearchPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<ICategoryResearchData | null>(null);
-  const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const { startCategoryResearch, isTaskRunning, tasks } = useGeneration();
+  const loading = isTaskRunning('category_research');
 
   // 页面加载时从本地存储恢复数据
   useEffect(() => {
@@ -31,46 +32,34 @@ export default function CategoryResearchPage() {
     }
   }, []);
 
-  const generateResearch = useCallback(async () => {
-    setLoading(true);
-    try {
-      const categories: ICategory[] = [];
-      for (let i = 0; i < CATEGORY_DIRECTIONS.length; i++) {
-        const cat = CATEGORY_DIRECTIONS[i];
-        try {
-          const result = (await capabilityClient
-            .load('novel_category_market_research_1')
-            .call('textToJson', { category_direction: cat })) as any;
-
-          if (result && result.category_name) {
-            categories.push(mapApiToCategory(result));
-          }
-        } catch (err) {
-          logger.error('品类调研生成失败:', String(err));
-        }
-      }
-
-      if (categories.length === 0) {
-        toast.error('AI 调研生成失败，请重试');
-        return;
-      }
-
-      const researchData: ICategoryResearchData = {
-        categories,
-        generatedAt: Date.now(),
-      };
-      setData(researchData);
-      // 持久化到本地存储
+  // 如果后台正在生成，轮询 storage 同步展示最新进度数据
+  useEffect(() => {
+    if (!loading) return;
+    const timer = window.setInterval(() => {
       const state = loadCreationState();
-      saveCreationState({ ...state, categoryResearchData: researchData });
-      toast.success(`已生成 ${categories.length} 个品类的调研数据`);
-    } catch (err) {
-      logger.error('品类调研生成失败:', String(err));
-      toast.error('AI 调研生成失败，请重试');
-    } finally {
-      setLoading(false);
+      if (state.categoryResearchData && state.categoryResearchData.categories.length > 0) {
+        setData(state.categoryResearchData);
+      }
+    }, 800);
+    return () => window.clearInterval(timer);
+  }, [loading]);
+
+  // 生成完成后读一次最终数据
+  useEffect(() => {
+    if (tasks.some((t) => t.type === 'category_research' && t.status === 'done')) {
+      const state = loadCreationState();
+      if (state.categoryResearchData) {
+        setData(state.categoryResearchData);
+      }
     }
-  }, []);
+  }, [tasks]);
+
+  const generateResearch = useCallback(async () => {
+    const result = await startCategoryResearch(CATEGORY_DIRECTIONS, mapApiToCategory);
+    if (result) {
+      setData(result);
+    }
+  }, [startCategoryResearch]);
 
   const handleSelectCategory = useCallback(
     (category: ICategory) => {

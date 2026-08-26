@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, ArrowLeft, Lightbulb, Loader2, Tag } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -6,16 +6,18 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import type { ICategory, IOutlineCard } from '@/data/novel';
 import { loadCreationState, saveCreationState } from '@/lib/storage';
+import { useGeneration } from '@/contexts/GenerationContext';
 
 export default function OutlinePage() {
   const navigate = useNavigate();
   const [category, setCategory] = useState<ICategory | null>(null);
   const [outlines, setOutlines] = useState<IOutlineCard[]>([]);
-  const [loading, setLoading] = useState(false);
   const [rawText, setRawText] = useState('');
+  const { startOutlineBatch, isTaskRunning, getOutlineStreamingText, tasks } = useGeneration();
+  const loading = isTaskRunning('outline_batch');
+  const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
     const state = loadCreationState();
@@ -27,6 +29,39 @@ export default function OutlinePage() {
     }
   }, []);
 
+  // 如果后台正在生成，轮询同步流式文本
+  useEffect(() => {
+    if (!loading) {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = window.setInterval(() => {
+      const text = getOutlineStreamingText();
+      setRawText(text);
+    }, 150);
+    return () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [loading, getOutlineStreamingText]);
+
+  // 生成完成后读最终数据
+  useEffect(() => {
+    const doneTask = tasks.find((t) => t.type === 'outline_batch' && t.status === 'done');
+    if (doneTask) {
+      const state = loadCreationState();
+      if (state.outlineList && state.outlineList.length > 0) {
+        setOutlines(state.outlineList);
+        setRawText('');
+      }
+    }
+  }, [tasks]);
+
   const generateOutlines = useCallback(async () => {
     if (!category) {
       toast.warning('请先选择一个品类');
@@ -34,45 +69,20 @@ export default function OutlinePage() {
       return;
     }
 
-    setLoading(true);
     setOutlines([]);
     setRawText('');
 
-    try {
-      const stream = capabilityClient
-        .load('batch_generate_short_novel_outline_1')
-        .callStream('textGenerate', {
-          category: category.name,
-          count: '8个',
-          additional_requirements: '每个大纲要有独特的切入点，避免俗套，包含强悬念和反转元素',
-        });
-
-      let fullText = '';
-      for await (const chunk of stream as any) {
-        const piece = chunk.content ?? chunk.response ?? '';
-        if (piece) {
-          fullText += piece;
-          setRawText(fullText);
-        }
-      }
-
-      const parsed = parseOutlines(fullText);
-      if (parsed.length === 0) {
-        toast.error('大纲生成失败，请重试');
-        return;
-      }
-      setOutlines(parsed);
-      // 持久化大纲列表
-      const state = loadCreationState();
-      saveCreationState({ ...state, outlineList: parsed });
-      toast.success(`已生成 ${parsed.length} 个故事大纲`);
-    } catch (err) {
-      logger.error('一句话大纲生成失败:', String(err));
-      toast.error('大纲生成失败，请重试');
-    } finally {
-      setLoading(false);
+    const result = await startOutlineBatch(
+      category.name,
+      '8个',
+      '每个大纲要有独特的切入点，避免俗套，包含强悬念和反转元素',
+      parseOutlines
+    );
+    if (result) {
+      setOutlines(result);
+      setRawText('');
     }
-  }, [category, navigate]);
+  }, [category, navigate, startOutlineBatch]);
 
   const handleSelectOutline = useCallback(
     (outline: IOutlineCard) => {
