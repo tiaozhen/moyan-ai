@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Sparkles, ArrowLeft, Lightbulb, Loader2, Tag, BookOpen, ChevronDown } from 'lucide-react';
+import { Sparkles, Lightbulb, Loader2, Tag, BookOpen, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -176,13 +176,6 @@ export default function OutlinePage() {
     <div className="mx-auto max-w-7xl px-4 py-8 md:px-6 md:py-12">
         {/* 顶部 */}
         <section className="mb-10 md:mb-12">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => navigate('/')} className="gap-1">
-              <ArrowLeft className="size-4" />
-              返回品类调研
-            </Button>
-          </div>
-
           <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
             <div>
               <div className="mb-3 flex flex-wrap items-center gap-2">
