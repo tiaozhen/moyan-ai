@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BookOpen,
   Plus,
@@ -36,13 +36,112 @@ import {
 
 export default function BookListPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [articles, setArticles] = useState<INovelArticle[]>([]);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
   useEffect(() => {
     const state = loadCreationState();
     setArticles(state.articles);
-  }, []);
+    // URL 带 seed=1 时自动生成测试数据（方便端到端验证）
+    if (searchParams.get('seed') === '1' && state.articles.length === 0) {
+      const testCategory: ICategory = {
+        id: 'seed_cat_1',
+        name: '都市异能',
+        heatIndex: 85,
+        competitionLevel: '高',
+        competitionScore: 80,
+        readerProfile: {
+          ageDistribution: ['18-25岁', '26-35岁'],
+          genderRatio: { malePercent: 60, femalePercent: 40 },
+          interestTags: ['爽文', '逆袭', '异能'],
+          readingPreferences: ['快节奏', '主角光环'],
+        },
+        growthTrend: {
+          past3MonthsTrend: '上升',
+          past3MonthsGrowthRate: 15,
+          future3MonthsForecast: '持续增长',
+          future3MonthsExpectedGrowthRate: 20,
+          monthlyData: [
+            { month: '3月前', value: 60 },
+            { month: '2月前', value: 70 },
+            { month: '上月', value: 85 },
+          ],
+        },
+        dimensionScores: {
+          marketPotential: 9,
+          monetizationPotential: 8,
+          creativeDifficulty: 6,
+          readerStickiness: 8,
+          developmentProspect: 9,
+        },
+        hotKeywords: ['异能', '都市', '逆袭', '爽文'],
+        representativeWorks: [
+          { workName: '都市最强维修工', author: '测试作者', popularity: '9.5' },
+        ],
+        developmentSuggestions: '建议突出主角能力成长曲线，搭配都市商战元素',
+        description: '都市背景下的异能觉醒故事，主角从底层逆袭',
+      };
+      const testOutline = {
+        id: 'seed_ol_1',
+        title: '都市最强维修工',
+        concept: '一个普通维修工意外获得修复万物的能力，从修手机到修人生，在都市中走出一条逆袭之路',
+        tags: ['都市', '异能', '逆袭'],
+      };
+      const testSkeleton: IStorySkeleton = {
+        characterSettings: [
+          { id: 'char_1', name: '林默', identity: '男主，普通维修工', personality: '沉稳内敛，重情义', coreDemand: '守护家人，证明自己', characterArc: '从自卑到自信' },
+          { id: 'char_2', name: '苏晚晴', identity: '女主，企业高管', personality: '外冷内热，独立果决', coreDemand: '找到真正懂自己的人', characterArc: '从功利到真情' },
+        ],
+        worldView: {
+          background: '现代都市，表面繁华下暗流涌动',
+          rules: '异能者隐于市井，各有规矩',
+          coreConflictEnvironment: '都市利益集团与异能者的矛盾',
+        },
+        plotNodes: [
+          { id: 'p1', nodeName: '异能觉醒', nodeContent: '林默意外觉醒修复能力', importance: '高' },
+          { id: 'p2', nodeName: '初试锋芒', nodeContent: '靠能力解决生活难题', importance: '中' },
+          { id: 'p3', nodeName: '危机逼近', nodeContent: '地下势力开始关注', importance: '高' },
+        ],
+        narrativeStructure: {
+          opening: '林默在底层挣扎，意外获得异能',
+          development: '依靠能力改变命运，结识女主',
+          climax: '面对终极反派的考验',
+          ending: '守护了重要的人',
+        },
+        chapterPlan: [
+          { id: 'ch_1', chapterNumber: '第1章', chapterTitle: '落魄维修工', chapterSummary: '林默在修车行艰难维生', coreEvent: '主角登场', characters: '林默', sceneLocation: '修车行', moodTone: '压抑', chapterStart: '清晨的修车行', chapterEnd: '林默黯然离去', foreshadowing: '父亲留下的旧工具箱', phase: '铺垫' },
+          { id: 'ch_2', chapterNumber: '第2章', chapterTitle: '奇迹的手', chapterSummary: '林默发现修复能力', coreEvent: '异能觉醒', characters: '林默', sceneLocation: '出租屋', moodTone: '震惊', chapterStart: '回到破旧出租屋', chapterEnd: '他看着焕然一新的手表', foreshadowing: '修复时有温热感', phase: '铺垫' },
+          { id: 'ch_3', chapterNumber: '第3章', chapterTitle: '第一桶金', chapterSummary: '林默靠能力赚第一笔钱', coreEvent: '初试获利', characters: '林默、手机店老板', sceneLocation: '电子市场', moodTone: '兴奋', chapterStart: '林默拿着碎屏手机', chapterEnd: '他握着刚赚到的钱', foreshadowing: '老板狐疑打量他', phase: '发展' },
+        ],
+      };
+      const newArticle: INovelArticle = {
+        id: 'seed_book_001',
+        title: '都市最强维修工',
+        lengthType: 'medium',
+        category: testCategory,
+        outline: testOutline,
+        storySkeleton: testSkeleton,
+        chapters: [],
+        currentChapterId: null,
+        createdAt: Date.now() - 86400000,
+        updatedAt: Date.now() - 3600000,
+      };
+      const next = {
+        ...state,
+        articles: [newArticle],
+        currentArticleId: newArticle.id,
+        selectedCategory: testCategory,
+        selectedOutline: testOutline,
+      };
+      saveCreationState(next);
+      setArticles([newArticle]);
+      // 清掉 seed 参数，避免刷新重复生成
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('seed');
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const handleOpenBook = useCallback(
     (articleId: string) => {
