@@ -1,4 +1,4 @@
-// EXPORTS: buildChapterGenerationInput
+// EXPORTS: buildChapterGenerationInput, ensureSafeCurrentContext
 import type { IChapter, IStorySkeleton } from '@/data/novel';
 
 /**
@@ -128,8 +128,7 @@ export function buildChapterGenerationInput(
 
   // 必填兜底：第一章或无前文时，给一个占位说明
   if (!current_context.trim()) {
-    current_context =
-      '（本章为小说开篇，无前文内容，请基于故事骨架和本章设定直接开始创作第一章正文）';
+    current_context = buildFirstChapterContext(chapter);
   }
 
   // ========== generation_requirement：生成具体要求 ==========
@@ -155,4 +154,43 @@ export function buildChapterGenerationInput(
   const generation_requirement = reqParts.join('\n');
 
   return { novel_outline, current_context, generation_requirement };
+}
+
+/**
+ * 第一章 / 无前文内容时的 current_context 占位文本
+ */
+export function buildFirstChapterContext(chapter: { chapterNumber?: number | string; chapterTitle?: string } = {}): string {
+  return `本章为小说开篇，无前文内容，请基于故事骨架和本章章节规划直接开始创作。${
+    chapter.chapterTitle ? `本章标题：${chapter.chapterTitle}` : ''
+  }`;
+}
+
+/**
+ * 前文章节尚未生成正文时的 current_context 占位文本
+ */
+export function buildPrevNotGeneratedContext(): string {
+  return '前文章节尚未生成正文，请基于故事骨架和本章章节规划创作，并确保与整体剧情连贯。';
+}
+
+/**
+ * current_context 最终保险兜底：确保传给插件的 current_context 永远非空
+ * 在所有调用 novel_content_generate_1 插件的入口处调用
+ */
+export function ensureSafeCurrentContext(
+  input: Record<string, any>,
+  chapterInfo?: { chapterNumber?: number | string; chapterTitle?: string; content?: string }
+): Record<string, any> {
+  const safe = { ...input };
+  const ctx = safe.current_context;
+  if (ctx == null || (typeof ctx === 'string' && ctx.trim().length === 0)) {
+    const cn = chapterInfo?.chapterNumber;
+    const isFirst = cn === undefined || cn === null || cn === 1 || cn === '1' || String(cn) === '1';
+    if (isFirst) {
+      safe.current_context = buildFirstChapterContext(chapterInfo);
+    } else {
+      // 非第一章但没前文，用前文未生成占位
+      safe.current_context = buildPrevNotGeneratedContext();
+    }
+  }
+  return safe;
 }

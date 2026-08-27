@@ -12,6 +12,7 @@ import {
 import { capabilityClient, logger } from '@lark-apaas/client-toolkit-lite';
 import { toast } from 'sonner';
 import { loadCreationState, saveCreationState, updateCurrentArticle, setArticleSkeletonForArticle, updateArticleById } from '@/lib/storage';
+import { ensureSafeCurrentContext } from '@/lib/chapter-context';
 import type { ICategory, ICategoryResearchData, IOutlineCard, IStorySkeleton, IChapter, ICreationState, NovelLengthType } from '@/data/novel';
 import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
 
@@ -408,7 +409,9 @@ ${outline}
       setTaskProgress(taskType, `正在${actionLabel}...`);
 
       try {
-        const stream = capabilityClient.load(pluginId).callStream('textGenerate', input);
+        // current_context 必填兜底（续写/扩写场景 chapterContent 可能为空）
+        const safeInput = ensureSafeCurrentContext(input);
+        const stream = capabilityClient.load(pluginId).callStream('textGenerate', safeInput);
         let full = '';
 
         for await (const chunk of stream as any) {
@@ -549,7 +552,18 @@ ${outline}
       setTaskProgress(type, '准备生成章节...');
 
       try {
-        const stream = capabilityClient.load(pluginId).callStream('textGenerate', input);
+        // current_context 必填兜底
+        const state0 = loadCreationState();
+        const targetArticleId0 = articleId || state0.currentArticleId;
+        let chapterInfo: { chapterNumber?: number | string; chapterTitle?: string; content?: string } | undefined;
+        const allChapters = targetArticleId0
+          ? state0.articles.find((a) => a.id === targetArticleId0)?.chapters || state0.chapters
+          : state0.chapters;
+        const ch = allChapters.find((c) => c.id === chapterId);
+        if (ch) chapterInfo = { chapterNumber: ch.chapterNumber, chapterTitle: ch.chapterTitle, content: ch.content };
+        const safeInput = ensureSafeCurrentContext(input, chapterInfo);
+
+        const stream = capabilityClient.load(pluginId).callStream('textGenerate', safeInput);
         let full = '';
 
         for await (const chunk of stream as any) {
@@ -792,8 +806,52 @@ ${outline}
           generatingChapterIdRef.current = chapter.id;
 
           const input = buildInput(chapter.id);
+          // ===== 逐章构建高质量 current_context（整本书生成模式下每章都重新计算） =====
+          // 1. 从 storage 读取最新已生成章节作为前文（避免页面闭包 stale 数据）
+          const latestState = loadCreationState();
+          const tgtId = articleId || latestState.currentArticleId;
+          const latestChapters = tgtId
+            ? (latestState.articles.find((a) => a.id === tgtId)?.chapters || latestState.chapters)
+            : latestState.chapters;
+          const curIdx = latestChapters.findIndex((c) => c.id === chapter.id);
+          const prevChapters = curIdx > 0 ? latestChapters.slice(0, curIdx) : [];
+
+          let prevContext = '';
+          if (prevChapters.length > 0) {
+            // 收集最近 3 章的正文片段作为前文上下文
+            const prevTexts: string[] = [];
+            for (let k = prevChapters.length - 1; k >= 0 && prevTexts.length < 3; k--) {
+              const pch = prevChapters[k];
+              const plain = (pch.content || '').replace(/<[^>]+>/g, '').trim();
+              if (plain) {
+                const snippet = plain.slice(0, 600);
+                prevTexts.unshift(
+                  `【第${pch.chapterNumber}章 ${pch.chapterTitle}】\n${snippet}${plain.length > 600 ? '\n...（内容有删减）' : ''}`
+                );
+              } else if (pch.chapterSummary) {
+                prevTexts.unshift(
+                  `【第${pch.chapterNumber}章 ${pch.chapterTitle}】${pch.chapterSummary}`
+                );
+              }
+            }
+            prevContext = prevTexts.join('\n\n');
+          }
+
+          // 2. 如果 buildInput 传了 current_context 就用它，否则用上面拼的
+          const inputCtx = (input.current_context && input.current_context.trim()) || '';
+          const finalContext = inputCtx || prevContext;
+
+          // 3. 合并：buildInput 里的 novel_outline / generation_requirement 保留，current_context 用我们拼的
+          const mergedInput = { ...input, current_context: finalContext };
+
+          // 4. 最后兜底保险（确保永远不为空）
+          const safeInput = ensureSafeCurrentContext(mergedInput, {
+            chapterNumber: chapter.chapterNumber,
+            chapterTitle: chapter.chapterTitle,
+            content: chapter.content,
+          });
           // 已有内容的话从末尾续写（这里整本书模式下都是新章节，直接生成）
-          const stream = capabilityClient.load(pluginId).callStream('textGenerate', input);
+          const stream = capabilityClient.load(pluginId).callStream('textGenerate', safeInput);
           let full = chapter.content ? chapter.content.replace(/<\/?p>/g, '').split('\n').join('\n') : '';
 
           try {
