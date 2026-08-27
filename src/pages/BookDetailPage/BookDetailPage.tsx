@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, Outlet, useLocation } from 'react-router-dom';
 import { useRef } from 'react';
-import { ArrowLeft, BookOpen, FileText } from 'lucide-react';
+import { ArrowLeft, BookOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { loadCreationState, setCurrentArticle, saveCreationState } from '@/lib/storage';
@@ -82,39 +82,6 @@ export default function BookDetailPage() {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Tab 导航 */}
-      <div className="border-b border-border bg-background">
-        <div className="mx-auto flex gap-1 px-4 md:px-6 max-w-[1400px]">
-          <NavLink
-            to={`/books/${bookId}`}
-            end
-            className={({ isActive }) =>
-              `flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`
-            }
-          >
-            <FileText className="size-4" />
-            大纲
-          </NavLink>
-          <NavLink
-            to={`/books/${bookId}/editor`}
-            className={({ isActive }) =>
-              `flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`
-            }
-          >
-            <BookOpen className="size-4" />
-            创作
-          </NavLink>
         </div>
       </div>
 
