@@ -194,25 +194,29 @@ export default function BookEditorTab() {
       return;
     }
     setArticle(art);
-    let initChapters: IChapter[] = art.chapters;
-    if (initChapters.length === 0 && art.storySkeleton) {
-      initChapters = art.storySkeleton.chapterPlan.map((meta) => ({
-        ...meta,
-        id: meta.id,
-        content: '',
-        status: 'unwritten' as const,
-        lastModified: Date.now(),
-      }));
-      const newState = updateArticleById(state, bookId, (a) => ({
-        ...a,
-        chapters: initChapters,
-        currentChapterId: initChapters[0]?.id || null,
-      }));
-      saveCreationState(newState);
+    let initChapters: IChapter[] = art.chapters || [];
+    if (initChapters.length === 0 && art.storySkeleton && Array.isArray(art.storySkeleton.chapterPlan)) {
+      initChapters = art.storySkeleton.chapterPlan
+        .filter((meta) => meta && meta.id)
+        .map((meta) => ({
+          ...meta,
+          id: meta.id,
+          content: '',
+          status: 'unwritten' as const,
+          lastModified: Date.now(),
+        }));
+      if (initChapters.length > 0) {
+        const newState = updateArticleById(state, bookId, (a) => ({
+          ...a,
+          chapters: initChapters,
+          currentChapterId: initChapters[0]?.id || null,
+        }));
+        saveCreationState(newState);
+      }
     }
     setChapters(initChapters);
     setCurrentChapterId(art.currentChapterId || initChapters[0]?.id || null);
-    setSkeleton(art.storySkeleton);
+    setSkeleton(art.storySkeleton || null);
   }, [bookId]);
 
   // ========== 轮询：生成中同步数据 ==========
@@ -663,9 +667,35 @@ export default function BookEditorTab() {
     return null;
   }
 
+  // 无章节且无骨架 → 空状态引导
+  const showEmptyState = article && chapters.length === 0 && !skeleton;
+
+  if (showEmptyState) {
+    return (
+      <div className="flex flex-1 min-h-0 w-full items-center justify-center">
+        <div className="mx-auto w-full max-w-md px-4 text-center">
+          <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary/10">
+            <BookOpen className="size-7 text-primary" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">还没有章节规划</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            请先返回大纲页面，生成故事骨架和章节规划后，再来开始创作吧。
+          </p>
+          <Button
+            className="mt-6 gap-2"
+            onClick={() => navigate(`/books/${bookId}`)}
+          >
+            <ArrowLeft className="size-4" />
+            返回大纲
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={200}>
-      <div className="flex h-[calc(100vh-8rem)] min-h-0 w-full flex-col overflow-hidden">
+      <div className="flex flex-1 min-h-0 w-full flex-col overflow-hidden">
         {/* ========== 顶部信息栏 ========== */}
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-card/80 px-4 backdrop-blur">
           {/* 左侧：返回 + 书名 + 章节 */}

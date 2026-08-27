@@ -119,26 +119,34 @@ export default function BookOutlineTab() {
   );
 
   const handleGoToEditor = useCallback(() => {
-    if (!skeleton || !bookId) return;
-    // 确保章节列表已初始化
-    const state = loadCreationState();
-    const current = state.articles.find((a) => a.id === bookId);
-    if (current) {
-      let chapters: IChapter[];
-      if (current.chapters.length > 0) {
-        chapters = current.chapters;
-      } else {
-        chapters = skeleton.chapterPlan.map((meta) => ({
-          ...meta,
-          id: meta.id,
-          content: '',
-          status: 'unwritten' as const,
-          lastModified: Date.now(),
-        }));
-      }
-      const newState = setArticleSkeletonForArticle(state, bookId, skeleton, chapters);
-      saveCreationState(newState);
+    if (!skeleton || !bookId) {
+      toast.error('请先生成故事骨架');
+      return;
     }
+    try {
+      // 确保章节列表已初始化
+      const state = loadCreationState();
+      const current = state.articles.find((a) => a.id === bookId);
+        if (current) {
+          let chapters: IChapter[] = current.chapters || [];
+          if (chapters.length === 0 && Array.isArray(skeleton.chapterPlan)) {
+            chapters = skeleton.chapterPlan
+              .filter((meta) => meta && meta.id)
+              .map((meta) => ({
+                ...meta,
+                id: meta.id,
+                content: '',
+                status: 'unwritten' as const,
+                lastModified: Date.now(),
+              }));
+          }
+          const newState = setArticleSkeletonForArticle(state, bookId, skeleton, chapters);
+          saveCreationState(newState);
+        }
+    } catch (err) {
+      toast.error('初始化章节失败，请重试');
+    }
+    // 无论初始化是否成功，都跳转到创作页（创作页内有兜底逻辑）
     navigate(`/books/${bookId}/editor`);
   }, [skeleton, bookId, navigate]);
 

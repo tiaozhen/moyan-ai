@@ -45,7 +45,7 @@ export default function BookDetailPage() {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-4rem)] flex-col">
+    <div className="flex h-[calc(100vh-4rem)] flex-col overflow-hidden">
       {/* 页面标题栏 */}
       <div className="border-b border-border bg-card/50">
         <div className="mx-auto flex max-w-[1400px] items-center gap-4 px-4 py-3 md:px-6">
@@ -113,7 +113,7 @@ export default function BookDetailPage() {
       </div>
 
       {/* 子内容区 */}
-      <div className="flex-1">
+      <div className="flex flex-1 min-h-0 flex-col">
         <Outlet />
       </div>
     </div>
