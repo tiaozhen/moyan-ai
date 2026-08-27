@@ -88,8 +88,9 @@ interface GenerationContextValue {
     pluginId: string;
     buildInput: (chapterId: string) => any;
     articleId?: string;
+    mode?: 'incremental' | 'overwrite';
   }) => Promise<boolean>;
-  getBookProgress: () => { currentIndex: number; total: number; currentChapterId: string | null; chapterTitle: string | null; paused: boolean; stopped: boolean; done: boolean } | null;
+  getBookProgress: () => { currentIndex: number; total: number; currentChapterId: string | null; chapterTitle: string | null; paused: boolean; stopped: boolean; done: boolean; failedChapters?: { id: string; title: string; error: string }[] } | null;
 }
 
 const GenerationContext = createContext<GenerationContextValue | null>(null);
@@ -129,6 +130,7 @@ export function GenerationProvider({ children }: { children: ReactNode }) {
     paused: boolean;
     stopped: boolean;
     done: boolean;
+    failedChapters: { id: string; title: string; error: string }[];
   } | null>(null);
 
   const setTaskProgress = useCallback((type: GenerationTaskType, progressText: string) => {
@@ -744,8 +746,9 @@ ${outline}
       pluginId: string;
       buildInput: (chapterId: string) => any;
       articleId?: string;
+      mode?: 'incremental' | 'overwrite';
     }): Promise<boolean> => {
-      const { startChapterId, pluginId, buildInput, articleId } = params;
+      const { startChapterId, pluginId, buildInput, articleId, mode = 'incremental' } = params;
       const type: GenerationTaskType = 'novel_book_generate';
       const ok = startTask(type);
       if (!ok) return false;
@@ -778,6 +781,7 @@ ${outline}
           paused: false,
           stopped: false,
           done: false,
+          failedChapters: [],
         };
 
         for (let i = startIndex; i < chapters.length; i++) {
@@ -795,14 +799,37 @@ ${outline}
           };
           setTaskProgress(type, `第 ${i - startIndex + 1}/${total} 章生成中：${chapter.chapterTitle}`);
 
-          // 如果本章已生成（有内容），跳过（继续生成的情况不重写已有内容，仅生成未生成章节）
-          if (chapter.content && chapter.content.trim().length > 0) {
-            // 已生成章节直接跳过
+          // 增量模式下跳过已有内容的章节；覆盖模式下全部重新生成
+          if (mode === 'incremental' && chapter.content && chapter.content.trim().length > 0) {
             continue;
           }
 
+          // 覆盖模式下，生成前先清空该章现有正文
+          if (mode === 'overwrite') {
+            const clearSt = loadCreationState();
+            const clearTgtId = articleId || clearSt.currentArticleId;
+            let clearChapters: IChapter[] = clearSt.chapters;
+            if (clearTgtId) {
+              const art = clearSt.articles.find((a) => a.id === clearTgtId);
+              if (art) clearChapters = art.chapters;
+            }
+            const cleared = clearChapters.map((c) =>
+              c.id === chapter.id
+                ? { ...c, content: '', status: 'unwritten' as const, lastModified: Date.now() }
+                : c
+            );
+            let clearNewState: ICreationState = { ...clearSt, chapters: cleared };
+            if (clearTgtId) {
+              clearNewState = updateArticleById(clearNewState, clearTgtId, (a) => ({
+                ...a,
+                chapters: cleared,
+              }));
+            }
+            saveCreationState(clearNewState);
+          }
+
           // 启动单章生成 —— 这里内联实现以支持每 chunk 检查暂停
-          chapterStreamingRef.current = chapter.content || '';
+          chapterStreamingRef.current = '';
           generatingChapterIdRef.current = chapter.id;
 
           const input = buildInput(chapter.id);
@@ -852,7 +879,7 @@ ${outline}
           });
           // 已有内容的话从末尾续写（这里整本书模式下都是新章节，直接生成）
           const stream = capabilityClient.load(pluginId).callStream('textGenerate', safeInput);
-          let full = chapter.content ? chapter.content.replace(/<\/?p>/g, '').split('\n').join('\n') : '';
+          let full = '';
 
           try {
             for await (const chunk of stream as any) {
@@ -908,6 +935,14 @@ ${outline}
             const errMsg = extractErrorMessage(err);
             logger.error(`整本书生成 第${i + 1}章失败:`, errMsg);
             toast.error(`${chapter.chapterTitle} 生成失败：${errMsg}`);
+            // 记录失败章节
+            bookProgressRef.current = {
+              ...bookProgressRef.current!,
+              failedChapters: [
+                ...bookProgressRef.current!.failedChapters,
+                { id: chapter.id, title: chapter.chapterTitle, error: errMsg },
+              ],
+            };
           }
 
           // 本章结束后检查是否被停止
@@ -931,7 +966,12 @@ ${outline}
         }
 
         markTaskDone(type);
-        toast.success('全书生成完成');
+        const failed = bookProgressRef.current?.failedChapters || [];
+        if (failed.length > 0) {
+          toast.success(`全书生成完成，${failed.length} 章生成失败`);
+        } else {
+          toast.success('全书生成完成');
+        }
         return true;
       } catch (err) {
         const errMsg = extractErrorMessage(err);

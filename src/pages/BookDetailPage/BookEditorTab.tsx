@@ -121,6 +121,7 @@ export default function BookEditorTab() {
   const [customPrompt, setCustomPrompt] = useState('');
   const [showBookDialog, setShowBookDialog] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const [bookGenMode, setBookGenMode] = useState<'incremental' | 'overwrite'>('incremental');
   const [streamingText, setStreamingText] = useState('');
 
   const {
@@ -507,6 +508,15 @@ export default function BookEditorTab() {
   const startBookGenerationFrom = useCallback(
     async (mode: 'fromCurrent' | 'fromStart') => {
       if (!skeleton || !bookId) return;
+      // 覆盖模式需要二次确认
+      if (bookGenMode === 'overwrite') {
+        const confirmMsg = mode === 'fromStart'
+          ? '此操作将覆盖全书所有章节的现有正文内容，是否继续？'
+          : '此操作将覆盖从本章到结尾所有章节的现有正文内容，是否继续？';
+        if (!window.confirm(confirmMsg)) {
+          return;
+        }
+      }
       setShowBookDialog(false);
       let startChapterId: string;
       if (mode === 'fromStart') {
@@ -554,9 +564,10 @@ export default function BookEditorTab() {
         pluginId: 'novel_content_generate_1',
         buildInput,
         articleId: bookId,
+        mode: bookGenMode,
       });
     },
-    [skeleton, bookId, chapters, currentChapter, customPrompt, startBookGeneration]
+    [skeleton, bookId, chapters, currentChapter, customPrompt, startBookGeneration, bookGenMode]
   );
 
   // ========== 续写 / 润色 / 扩写 ==========
@@ -1049,7 +1060,9 @@ export default function BookEditorTab() {
                       onClick={() => currentChapter && handleGenerateChapter(currentChapter.id)}
                     >
                       <Sparkles className="size-4" />
-                      AI 生成本章
+                      {currentChapter?.content && currentChapter.content.trim().length > 0
+                        ? '重新生成本章'
+                        : 'AI 生成本章'}
                     </Button>
                     <Button
                       variant="outline"
@@ -1279,36 +1292,67 @@ export default function BookEditorTab() {
                 生成整本书
               </AlertDialogTitle>
               <AlertDialogDescription>
-                请选择生成范围：
+                请选择生成模式和生成范围：
               </AlertDialogDescription>
             </AlertDialogHeader>
-            <div className="space-y-2">
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-3 h-auto py-3"
-                onClick={() => startBookGenerationFrom('fromCurrent')}
-              >
-                <div className="flex-1 text-left">
-                  <div className="text-sm font-medium">从本章开始</div>
-                  <div className="text-xs text-muted-foreground">
-                    从当前章节开始，逐章生成到最后一章
-                  </div>
+            <div className="space-y-3">
+              {/* 生成模式选择 */}
+              <div>
+                <div className="text-xs font-medium text-muted-foreground mb-2">生成模式</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBookGenMode('incremental')}
+                    className={`rounded-lg border p-3 text-left text-xs transition-colors ${bookGenMode === 'incremental' ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:border-border/80'}`}
+                  >
+                    <div className="font-medium mb-0.5">增量生成</div>
+                    <div className="text-[11px] text-muted-foreground">仅生成未生成的章节</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBookGenMode('overwrite')}
+                    className={`rounded-lg border p-3 text-left text-xs transition-colors ${bookGenMode === 'overwrite' ? 'border-destructive bg-destructive/5 text-destructive' : 'border-border hover:border-border/80'}`}
+                  >
+                    <div className="font-medium mb-0.5">覆盖重新生成</div>
+                    <div className="text-[11px] text-muted-foreground">全部重新生成并覆盖</div>
+                  </button>
                 </div>
-                <ChevronRight className="size-4 text-muted-foreground" />
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-3 h-auto py-3"
-                onClick={() => startBookGenerationFrom('fromStart')}
-              >
-                <div className="flex-1 text-left">
-                  <div className="text-sm font-medium">从第一章重新生成</div>
-                  <div className="text-xs text-muted-foreground">
-                    从第一章开始，重新生成整本书所有章节
-                  </div>
+              </div>
+              <Separator />
+              {/* 范围选择 */}
+              <div>
+                <div className="text-xs font-medium text-muted-foreground mb-2">生成范围</div>
+                <div className="space-y-2">
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start gap-3 h-auto py-3"
+                    onClick={() => startBookGenerationFrom('fromCurrent')}
+                  >
+                    <div className="flex-1 text-left">
+                      <div className="text-sm font-medium">从本章开始</div>
+                      <div className="text-xs text-muted-foreground">
+                        从当前章节开始，逐章生成到最后一章
+                        {bookGenMode === 'incremental' ? '（跳过已有内容）' : '（全部覆盖）'}
+                      </div>
+                    </div>
+                    <ChevronRight className="size-4 text-muted-foreground" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start gap-3 h-auto py-3"
+                    onClick={() => startBookGenerationFrom('fromStart')}
+                  >
+                    <div className="flex-1 text-left">
+                      <div className="text-sm font-medium">从第一章重新生成</div>
+                      <div className="text-xs text-muted-foreground">
+                        从第一章开始，重新生成整本书所有章节
+                        {bookGenMode === 'incremental' ? '（跳过已有内容）' : '（全部覆盖）'}
+                      </div>
+                    </div>
+                    <ChevronRight className="size-4 text-muted-foreground" />
+                  </Button>
                 </div>
-                <ChevronRight className="size-4 text-muted-foreground" />
-              </Button>
+              </div>
             </div>
           </AlertDialogContent>
         </AlertDialog>

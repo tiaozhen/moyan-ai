@@ -67,6 +67,7 @@ export default function AIAssistantPanel({
   const [streamingText, setStreamingText] = useState('');
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [showBookDialog, setShowBookDialog] = useState(false);
+  const [bookGenMode, setBookGenMode] = useState<'incremental' | 'overwrite'>('incremental');
   const [totalChapters, setTotalChapters] = useState(0);
   const [currentIndex, setCurrentIndex] = useState(0);
   const {
@@ -223,6 +224,15 @@ export default function AIAssistantPanel({
   const startBookGenerationFrom = useCallback(
     async (mode: 'fromCurrent' | 'fromStart') => {
       if (!skeleton) return;
+      // 覆盖模式需要二次确认
+      if (bookGenMode === 'overwrite') {
+        const confirmMsg = mode === 'fromStart'
+          ? '此操作将覆盖全书所有章节的现有正文内容，是否继续？'
+          : '此操作将覆盖从本章到结尾所有章节的现有正文内容，是否继续？';
+        if (!window.confirm(confirmMsg)) {
+          return;
+        }
+      }
       setShowBookDialog(false);
       const state = loadCreationState();
       const chapters = state.chapters || [];
@@ -272,9 +282,10 @@ export default function AIAssistantPanel({
         pluginId: 'novel_content_generate_1',
         buildInput,
         articleId,
+        mode: bookGenMode,
       });
     },
-    [skeleton, currentChapter, customPrompt, startBookGeneration, articleId]
+    [skeleton, currentChapter, customPrompt, startBookGeneration, articleId, bookGenMode]
   );
 
   const handlePause = useCallback(() => {
@@ -681,7 +692,7 @@ export default function AIAssistantPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {/* 整本书生成确认对话框 */}
+       {/* 整本书生成确认对话框 */}
       <AlertDialog open={showBookDialog} onOpenChange={setShowBookDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -690,40 +701,71 @@ export default function AIAssistantPanel({
               生成整本书
             </AlertDialogTitle>
             <AlertDialogDescription>
-              检测到当前不是第一章，请选择生成范围：
+              检测到当前不是第一章，请选择生成范围和生成模式：
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-2">
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-3 h-auto py-3"
-              onClick={() => startBookGenerationFrom('fromCurrent')}
-            >
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <Play className="size-4" />
+          <div className="space-y-3">
+            {/* 生成模式选择 */}
+            <div>
+              <div className="text-xs font-medium text-muted-foreground mb-2">生成模式</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBookGenMode('incremental')}
+                  className={`rounded-lg border p-3 text-left text-xs transition-colors ${bookGenMode === 'incremental' ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:border-border/80'}`}
+                >
+                  <div className="font-medium mb-0.5">增量生成</div>
+                  <div className="text-[11px] text-muted-foreground">仅生成未生成的章节</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBookGenMode('overwrite')}
+                  className={`rounded-lg border p-3 text-left text-xs transition-colors ${bookGenMode === 'overwrite' ? 'border-destructive bg-destructive/5 text-destructive' : 'border-border hover:border-border/80'}`}
+                >
+                  <div className="font-medium mb-0.5">覆盖重新生成</div>
+                  <div className="text-[11px] text-muted-foreground">全部重新生成并覆盖</div>
+                </button>
               </div>
-              <div className="text-left">
-                <div className="text-sm font-medium">从本章生成到结尾</div>
-                <div className="text-xs text-muted-foreground">
-                  从第 {currentIndex + 1} 章开始，共 {totalChapters - currentIndex} 章
-                </div>
+            </div>
+            <Separator />
+            {/* 范围选择 */}
+            <div>
+              <div className="text-xs font-medium text-muted-foreground mb-2">生成范围</div>
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-3 h-auto py-3"
+                  onClick={() => startBookGenerationFrom('fromCurrent')}
+                >
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <Play className="size-4" />
+                  </div>
+                  <div className="text-left">
+                    <div className="text-sm font-medium">从本章生成到结尾</div>
+                    <div className="text-xs text-muted-foreground">
+                      从第 {currentIndex + 1} 章开始，共 {totalChapters - currentIndex} 章
+                      {bookGenMode === 'incremental' ? '（跳过已有内容）' : '（全部覆盖）'}
+                    </div>
+                  </div>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-3 h-auto py-3"
+                  onClick={() => startBookGenerationFrom('fromStart')}
+                >
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary">
+                    <BookOpen className="size-4" />
+                  </div>
+                  <div className="text-left">
+                    <div className="text-sm font-medium">从第一章重新生成全书</div>
+                    <div className="text-xs text-muted-foreground">
+                      从第 1 章开始，共 {totalChapters} 章
+                      {bookGenMode === 'incremental' ? '（跳过已有内容）' : '（全部覆盖）'}
+                    </div>
+                  </div>
+                </Button>
               </div>
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-3 h-auto py-3"
-              onClick={() => startBookGenerationFrom('fromStart')}
-            >
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary">
-                <BookOpen className="size-4" />
-              </div>
-              <div className="text-left">
-                <div className="text-sm font-medium">从第一章重新生成全书</div>
-                <div className="text-xs text-muted-foreground">
-                  从第 1 章开始，共 {totalChapters} 章（已有内容的章节会跳过）
-                </div>
-              </div>
-            </Button>
+            </div>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
