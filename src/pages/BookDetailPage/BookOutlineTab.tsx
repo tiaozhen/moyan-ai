@@ -119,36 +119,43 @@ export default function BookOutlineTab() {
   );
 
   const handleGoToEditor = useCallback(() => {
-    if (!skeleton || !bookId) {
-      toast.error('请先生成故事骨架');
+    if (!bookId) {
+      toast.error('书籍 ID 无效');
       return;
     }
-    try {
-      // 确保章节列表已初始化
-      const state = loadCreationState();
-      const current = state.articles.find((a) => a.id === bookId);
-        if (current) {
-          let chapters: IChapter[] = current.chapters || [];
-          if (chapters.length === 0 && Array.isArray(skeleton.chapterPlan)) {
-            chapters = skeleton.chapterPlan
-              .filter((meta) => meta && meta.id)
-              .map((meta) => ({
-                ...meta,
-                id: meta.id,
-                content: '',
-                status: 'unwritten' as const,
-                lastModified: Date.now(),
-              }));
+
+    // 先跳转，再异步做章节初始化（避免初始化失败阻塞跳转）
+    const targetPath = `/books/${bookId}/editor`;
+    toast.info('正在进入创作页...', { id: 'goto-editor-toast' });
+
+    // 立即跳转，不让初始化逻辑阻塞用户操作
+    navigate(targetPath);
+
+    // 异步初始化章节（失败也不影响跳转）
+    setTimeout(() => {
+      try {
+        const state = loadCreationState();
+        const current = state.articles.find((a) => a.id === bookId);
+        if (current && current.chapters.length === 0 && current.storySkeleton && Array.isArray(current.storySkeleton.chapterPlan)) {
+          const chapters: IChapter[] = current.storySkeleton.chapterPlan
+            .filter((meta) => meta && meta.id)
+            .map((meta) => ({
+              ...meta,
+              id: meta.id,
+              content: '',
+              status: 'unwritten' as const,
+              lastModified: Date.now(),
+            }));
+          if (chapters.length > 0) {
+            const newState = setArticleSkeletonForArticle(state, bookId, current.storySkeleton, chapters);
+            saveCreationState(newState);
           }
-          const newState = setArticleSkeletonForArticle(state, bookId, skeleton, chapters);
-          saveCreationState(newState);
         }
-    } catch (err) {
-      toast.error('初始化章节失败，请重试');
-    }
-    // 无论初始化是否成功，都跳转到创作页（创作页内有兜底逻辑）
-    navigate(`/books/${bookId}/editor`);
-  }, [skeleton, bookId, navigate]);
+      } catch (err) {
+        toast.error('章节初始化失败，但您仍可在创作页查看');
+      }
+    }, 50);
+  }, [bookId, navigate]);
 
   const sectionCounts = useMemo(() => {
     if (!skeleton) return { characters: 0, worldview: 0, plot: 0, structure: 0, chapters: 0 };

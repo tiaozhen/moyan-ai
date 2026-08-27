@@ -1,16 +1,22 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, NavLink, Outlet } from 'react-router-dom';
+import { useParams, useNavigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useRef } from 'react';
 import { ArrowLeft, BookOpen, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { loadCreationState, setCurrentArticle, saveCreationState } from '@/lib/storage';
 import type { INovelArticle } from '@/data/novel';
 import { NOVEL_LENGTH_OPTIONS } from '@/data/novel';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 export default function BookDetailPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const errorBoundaryRef = useRef<ErrorBoundary | null>(null);
   const [article, setArticle] = useState<INovelArticle | null>(null);
+  // 路由变化时重置错误边界，允许从错误页切到正常页时重新渲染
+  const errorBoundaryKey = location.pathname;
 
   useEffect(() => {
     const state = loadCreationState();
@@ -112,9 +118,15 @@ export default function BookDetailPage() {
         </div>
       </div>
 
-      {/* 子内容区 */}
+      {/* 子内容区：错误边界包裹，防止子页面渲染崩溃导致白屏 */}
       <div className="flex flex-1 min-h-0 flex-col">
-        <Outlet />
+        <ErrorBoundary
+          key={errorBoundaryKey}
+          fallbackTitle="子页面渲染失败"
+          onBack={() => navigate(-1)}
+        >
+          <Outlet />
+        </ErrorBoundary>
       </div>
     </div>
   );

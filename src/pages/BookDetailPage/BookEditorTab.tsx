@@ -663,12 +663,50 @@ export default function BookEditorTab() {
   const isSingleChapterPaused = getTaskPauseStatus('novel_chapter_generate') === 'paused';
   const generatingChapterId = getGeneratingChapterId();
 
+  // 无 bookId → 显示友好提示（绝不能返回 null 导致白屏）
   if (!bookId) {
-    return null;
+    return (
+      <div className="flex flex-1 min-h-0 w-full items-center justify-center">
+        <div className="mx-auto w-full max-w-md px-4 text-center">
+          <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary/10">
+            <BookOpen className="size-7 text-primary" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">书籍 ID 无效</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            未找到对应的书籍信息，请返回书架重新选择。
+          </p>
+          <Button className="mt-6 gap-2" onClick={() => navigate('/books')}>
+            <ArrowLeft className="size-4" />
+            返回书架
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // 无文章数据 → 加载/空状态（避免 article 为 null 时后续渲染崩溃）
+  if (!article) {
+    return (
+      <div className="flex flex-1 min-h-0 w-full items-center justify-center">
+        <div className="mx-auto w-full max-w-md px-4 text-center">
+          <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-primary/10">
+            <BookOpen className="size-7 text-primary" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">未找到该书籍</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            这本小说可能已被删除，或者链接不正确。
+          </p>
+          <Button className="mt-6 gap-2" onClick={() => navigate('/books')}>
+            <ArrowLeft className="size-4" />
+            返回书架
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   // 无章节且无骨架 → 空状态引导
-  const showEmptyState = article && chapters.length === 0 && !skeleton;
+  const showEmptyState = chapters.length === 0 && !skeleton;
 
   if (showEmptyState) {
     return (
@@ -706,7 +744,7 @@ export default function BookEditorTab() {
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8"
-                  onClick={() => navigate(`/books/${bookId}/outline`)}
+                  onClick={() => navigate(`/books/${bookId}`)}
                 >
                   <ArrowLeft className="size-4" />
                 </Button>
